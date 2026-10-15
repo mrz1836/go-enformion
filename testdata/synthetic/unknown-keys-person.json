@@ -1,0 +1,10 @@
+{
+    "person": {
+        "personIdentifier": "G-1000000000000000044",
+        "fullName": {"first": "Avery", "last": "Example"},
+        "phoneNumbers": [{"phoneNumber": "(312) 555-0142"}]
+    },
+    "message": "",
+    "isError": false,
+    "error": {"inputErrors": [], "warnings": []}
+}

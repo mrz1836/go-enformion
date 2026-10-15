@@ -1,0 +1,13 @@
+{
+    "person": null,
+    "message": "Synthetic message: the request was refused.",
+    "requestId": "synthetic-request-0002",
+    "isError": true,
+    "error": {
+        "inputErrors": [
+            {"field": "Phone", "message": "Synthetic input error."},
+            "Synthetic input error as a string."
+        ],
+        "warnings": [null, 7]
+    }
+}

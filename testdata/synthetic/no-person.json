@@ -1,0 +1,16 @@
+{
+    "person": null,
+    "message": "",
+    "identityScore": 0,
+    "requestId": "synthetic-request-0001",
+    "pagination": {"currentPageNumber": 1, "resultsPerPage": 1, "totalPages": 0, "totalResults": 0},
+    "databaseQueryInfo": [],
+    "searchCriteria": [],
+    "totalRequestExecutionTimeMs": 97,
+    "requestType": "DevAPIContactEnrich",
+    "isError": false,
+    "error": {
+        "inputErrors": [],
+        "warnings": ["Synthetic warning: no person was returned."]
+    }
+}

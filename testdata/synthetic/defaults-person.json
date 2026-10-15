@@ -1,0 +1,16 @@
+{
+    "person": {
+        "personId": null,
+        "name": {"firstName": null, "middleName": "", "lastName": null},
+        "age": null,
+        "partialDob": "",
+        "addresses": [],
+        "phones": [],
+        "emails": [],
+        "relatives": []
+    },
+    "message": null,
+    "identityScore": null,
+    "isError": false,
+    "error": {"inputErrors": null, "warnings": null}
+}

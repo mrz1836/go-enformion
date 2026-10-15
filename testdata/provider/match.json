@@ -1,0 +1,85 @@
+{
+    "person": {
+        "personId": "G-1000000000000000042",
+        "name": {
+            "firstName": "Avery",
+            "middleName": "Q",
+            "lastName": "Example"
+        },
+        "age": "41",
+        "partialDob": "6/1985",
+        "addresses": [
+            {
+                "street": "100 Sample Way",
+                "unit": "",
+                "city": "Exampleton",
+                "state": "OH",
+                "zip": "45000",
+                "firstReportedDate": "3/2/2011",
+                "lastReportedDate": "8/14/2025"
+            },
+            {
+                "street": "200 Placeholder Rd",
+                "unit": "4B",
+                "city": "Testville",
+                "state": "OH",
+                "zip": "45001",
+                "firstReportedDate": "1/9/2004",
+                "lastReportedDate": "2/27/2011"
+            }
+        ],
+        "phones": [
+            {
+                "number": "(312) 555-0142",
+                "type": "mobile",
+                "isConnected": true,
+                "firstReportedDate": "5/5/2015",
+                "lastReportedDate": "9/30/2025"
+            },
+            {
+                "number": "(312) 555-0199",
+                "type": "landline",
+                "isConnected": false,
+                "firstReportedDate": "7/1/2006",
+                "lastReportedDate": "12/31/2012"
+            }
+        ],
+        "emails": [
+            {
+                "email": "avery.example@example.com",
+                "isValidated": true,
+                "isBusiness": false
+            },
+            {
+                "email": "a.example@example.org"
+            }
+        ],
+        "relatives": [
+            {
+                "personId": "G-1000000000000000043",
+                "name": {
+                    "firstName": "Jordan",
+                    "middleName": "",
+                    "lastName": "Example"
+                }
+            }
+        ]
+    },
+    "message": "",
+    "identityScore": 87,
+    "pagination": {
+        "currentPageNumber": 1,
+        "resultsPerPage": 1,
+        "totalPages": 1,
+        "totalResults": 0
+    },
+    "databaseQueryInfo": [],
+    "searchCriteria": [],
+    "totalRequestExecutionTimeMs": 412,
+    "requestType": "DevAPIContactEnrich",
+    "isError": false,
+    "error": {
+        "inputErrors": [],
+        "warnings": []
+    }
+}
