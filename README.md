@@ -2,7 +2,7 @@
 
 # 🔎&nbsp;&nbsp;go-enformion
 
-**A small, standard-library-only Go client for EnformionGO Contact Enrichment.**
+**A small, standard-library-only Go SDK for the EnformionGO developer APIs.**
 
 <br/>
 
@@ -96,14 +96,65 @@
 </table>
 <br/>
 
-go-enformion calls one operation of the [EnformionGO](https://go.enformion.com/developer-apis/) developer
-APIs (Enformion, LLC): standard **Contact Enrichment**, `POST https://devapi.enformion.com/Contact/Enrich`
-with the search type `DevAPIContactEnrich`. Give it a subject with at least two of name, phone, email and
-address, and it returns the provider's top person match (name, age, addresses, phones and emails) as
-typed Go values, with every field optional and nothing invented.
+go-enformion is a Go SDK for the [EnformionGO](https://go.enformion.com/developer-apis/) developer APIs
+(Enformion, LLC). Every API it supports shares one deliberately narrow and strict core: one HTTP attempt
+per call, no retries or redirects, bounded reads, strict JSON decoding, and errors that never contain
+credentials, personal data or provider text.
 
-The client is deliberately narrow and strict: one HTTP attempt per call, no retries or redirects, bounded
-reads, strict JSON decoding, and errors that never contain credentials, personal data or provider text.
+The first supported API is **Contact Enrichment** (`POST https://devapi.enformion.com/Contact/Enrich`,
+search type `DevAPIContactEnrich`). Give it a subject with at least two of name, phone, email and address,
+and it returns the provider's top person match (name, age, addresses, phones and emails) as typed Go
+values, with every field optional and nothing invented. The rest of the EnformionGO API is planned for
+future releases: see [Supported APIs](#-supported-apis).
+
+<br/>
+
+## 🧭 Supported APIs
+
+go-enformion adds the EnformionGO APIs one at a time. Each arrives as its own method on `Client`, with its
+own request and result types, without breaking existing callers. The list follows the provider's
+[API reference](https://enformiongo.readme.io/reference/overview); <sup>PRO</sup> marks the endpoints it
+labels as Pro.
+
+| Category | API | Status |
+|---|---|---|
+| **Single result** | [Contact Enrichment](https://enformiongo.readme.io/reference/contact-enrichment) | Available: `EnrichContact` |
+| | [Contact Enrich Plus](https://enformiongo.readme.io/reference/contact-enrich-plus) | Planned |
+| | [Caller ID](https://enformiongo.readme.io/reference/caller-id) | Planned |
+| | [Caller ID Plus](https://enformiongo.readme.io/reference/caller-id-plus) | Planned |
+| | [Email ID](https://enformiongo.readme.io/reference/email-id) | Planned |
+| | [Email ID Enrich Plus](https://enformiongo.readme.io/reference/email-id-enrich-plus) | Planned |
+| | [Contact ID](https://enformiongo.readme.io/reference/contact-id) | Planned |
+| | [Contact ID Plus](https://enformiongo.readme.io/reference/contact-id-plus) | Planned |
+| | [Address ID](https://enformiongo.readme.io/reference/address-id) | Planned |
+| | [Address ID Plus](https://enformiongo.readme.io/reference/address-id-plus) | Planned |
+| | [Address AutoComplete](https://enformiongo.readme.io/reference/address-autocomplete) | Planned |
+| **Lead verification** | [ELeadVerify](https://enformiongo.readme.io/reference/eleadverify) | Planned |
+| **People data** | [Person Search](https://enformiongo.readme.io/reference/person-search) | Planned |
+| | [ID Verification](https://enformiongo.readme.io/reference/id-verification) | Planned |
+| | [Census Search](https://enformiongo.readme.io/reference/census) | Planned |
+| | [Debt Search V2](https://enformiongo.readme.io/reference/debt-v2) <sup>PRO</sup> | Planned |
+| | [Divorce Search](https://enformiongo.readme.io/reference/divorce) | Planned |
+| | [Marriage Search](https://enformiongo.readme.io/reference/marriage) <sup>PRO</sup> | Planned |
+| | [Reverse Phone Search](https://enformiongo.readme.io/reference/reverse-phone) | Planned |
+| | [LinkedIn ID](https://enformiongo.readme.io/reference/linkedin-id) | Planned |
+| **Business data** | [Business Search](https://enformiongo.readme.io/reference/business) | Planned |
+| | [Business ID](https://enformiongo.readme.io/reference/business-id) | Planned |
+| | [Domain Search](https://enformiongo.readme.io/reference/domain) | Planned |
+| | [Workplace Search](https://enformiongo.readme.io/reference/workplace) | Planned |
+| | [Workplace drilldown lookups](https://enformiongo.readme.io/reference/get-states) (states, cities, industries, levels, departments, job titles) | Planned |
+| **Property data** | [Property Search V2](https://enformiongo.readme.io/reference/property-v2) | Planned |
+| **Court records** | [Criminal Search V2](https://enformiongo.readme.io/reference/criminal-search-v2) <sup>PRO</sup> | Planned |
+| | [Eviction Search](https://enformiongo.readme.io/reference/eviction) <sup>PRO</sup> | Planned |
+| | [Pre-Foreclosure Search](https://enformiongo.readme.io/reference/pre-foreclosure) <sup>PRO</sup> | Planned |
+| **Asset data** | [OFAC Search](https://enformiongo.readme.io/reference/ofac) <sup>PRO</sup> | Planned |
+| | [Vehicle Ownership](https://enformiongo.readme.io/reference/vehicle-ownership) <sup>PRO</sup> | Planned |
+| **License data** | [DEA Search](https://enformiongo.readme.io/reference/dea) <sup>PRO</sup> | Planned |
+| | [Professional License Search](https://enformiongo.readme.io/reference/professional-license) <sup>PRO</sup> | Planned |
+| **Data alerts** | [Data Alerts](https://enformiongo.readme.io/reference/data-alerts) (subscriptions, alerts and push notifications) | Planned |
+
+Each new API is a new billable surface with its own data, terms and contract, so each is added only after
+its own review; see [docs/adding-an-operation.md](docs/adding-an-operation.md).
 
 <br/>
 
@@ -195,7 +246,11 @@ A `Client` is immutable and safe for concurrent use; create one and reuse it.
 Credentials must each be 1 to 1024 bytes of printable ASCII with no leading or trailing spaces. Invalid
 arguments return a `*ValidationError` matching `ErrInvalidConfig` that names the argument, never its value.
 
-### Build a request
+### Contact Enrichment
+
+`EnrichContact` sends one subject and returns the provider's top person match.
+
+#### Build a request
 
 ```go
 req := enformion.EnrichContactRequest{
@@ -228,7 +283,7 @@ only whitespace; these are SDK limits, as the provider documents none. The phone
 because the provider's own examples disagree with its documented formats. `SessionID` must be empty or 1
 to 128 bytes of visible ASCII.
 
-### Read the result
+#### Read the result
 
 ```go
 res, err := client.EnrichContact(ctx, req)
@@ -360,7 +415,7 @@ examples do exactly that.
 - `devapi.enformion.com` is the only server the provider documents. **Every call is live**, and the
   provider's [pricing](https://go.enformion.com/pricing/) and help pages say it bills per successful match.
   There is no documented sandbox.
-- Each `EnrichContact` makes **at most one** HTTP attempt. The SDK never retries, follows a redirect, polls,
+- Each call makes **at most one** HTTP attempt. The SDK never retries, follows a redirect, polls,
   hedges or makes a follow-on call, and it disables the standard library's own resends (`GetBody` is nil,
   so neither HTTP/1 nor HTTP/2 can replay the POST, and no idempotency header is sent).
 - Invalid requests, and calls whose context is already done, send nothing.
@@ -404,7 +459,7 @@ claim of legal suitability (read the current terms yourself):
 </details>
 
 <details>
-<summary><strong><code>When no person comes back</code></strong></summary>
+<summary><strong><code>Contact Enrichment: when no person comes back</code></strong></summary>
 <br/>
 
 The provider does not document what a "no match" looks like. When an HTTP 200 response with
@@ -417,7 +472,7 @@ sits under keys the SDK does not recognize (as after a field rename) fails the c
 </details>
 
 <details>
-<summary><strong><code>Response members the SDK ignores</code></strong></summary>
+<summary><strong><code>Contact Enrichment: response members the SDK ignores</code></strong></summary>
 <br/>
 
 These members of the response are never decoded or type-checked, so a change in their contents cannot fail
@@ -436,11 +491,11 @@ Any of them could be added later without breaking callers.
 </details>
 
 <details>
-<summary><strong><code>Limits and unverified assumptions</code></strong></summary>
+<summary><strong><code>Contact Enrichment: limits and unverified assumptions</code></strong></summary>
 <br/>
 
-Built from the provider's documentation (readme.io docs version 1.4), which leaves these open. None has
-been checked against the live API:
+Built from the provider's Contact Enrichment documentation (readme.io docs version 1.4), which leaves
+these open. None has been checked against the live API:
 
 | Open question | What the SDK does until it is resolved |
 |---|---|
@@ -465,10 +520,9 @@ limits); see [Examples & Tests](#-examples--tests).
 <summary><strong><code>Scope and extension</code></strong></summary>
 <br/>
 
-Only standard Contact Enrichment is implemented. Contact Enrich Plus, Person Search, Caller ID, ID
-Verification, criminal and background searches, batch, pagination and detail lookups are out of scope,
-and none is stubbed. A future operation would be a new method on `Client` with its own request and result
-types, added without breaking existing callers; see [docs/adding-an-operation.md](docs/adding-an-operation.md).
+Contact Enrichment is implemented today; every other API in [Supported APIs](#-supported-apis) is planned,
+and none is stubbed. Each arrives as a new method on `Client` with its own request and result types,
+added without breaking existing callers; see [docs/adding-an-operation.md](docs/adding-an-operation.md).
 
 </details>
 
@@ -477,7 +531,7 @@ types, added without breaking existing callers; see [docs/adding-an-operation.md
 ## 📚 Documentation
 
 View the generated [documentation](https://pkg.go.dev/github.com/mrz1836/go-enformion?tab=doc) and the
-provider's [Contact Enrichment reference](https://enformiongo.readme.io/reference/contact-enrichment).
+provider's [API reference](https://enformiongo.readme.io/reference/overview).
 
 <details>
 <summary><strong><code>Development Setup (Getting Started)</code></strong></summary>
