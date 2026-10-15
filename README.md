@@ -168,6 +168,8 @@ go get github.com/mrz1836/go-enformion
 The library has **zero third-party runtime dependencies**: it imports only the standard library.
 `testify` is used only by the tests and their internal helper package.
 
+<br/>
+
 ### Credentials
 
 EnformionGO authenticates with an API key **name** and **password**, copied from the **Keys** tab of the
@@ -246,9 +248,13 @@ A `Client` is immutable and safe for concurrent use; create one and reuse it.
 Credentials must each be 1 to 1024 bytes of printable ASCII with no leading or trailing spaces. Invalid
 arguments return a `*ValidationError` matching `ErrInvalidConfig` that names the argument, never its value.
 
+<br/>
+
 ### Contact Enrichment
 
 `EnrichContact` sends one subject and returns the provider's top person match.
+
+<br/>
 
 #### Build a request
 
@@ -282,6 +288,8 @@ rewritten. Every text field must be valid UTF-8 of at most 256 bytes, with no co
 only whitespace; these are SDK limits, as the provider documents none. The phone format is not enforced,
 because the provider's own examples disagree with its documented formats. `SessionID` must be empty or 1
 to 128 bytes of visible ASCII.
+
+<br/>
 
 #### Read the result
 
@@ -322,6 +330,8 @@ provider's top match, not identity verification.
 
 Results marshal to JSON and back unchanged (`reflect.DeepEqual`); that JSON is this SDK's own
 serialization, not the provider's wire format.
+
+<br/>
 
 ### Handle errors
 
@@ -365,6 +375,8 @@ case errors.Is(err, enformion.ErrRejected):
 `CallError` exposes `Kind`, `StatusCode`, `RequestID` and `Field`; tests may build one from those fields
 and it matches `errors.Is` like a real one.
 
+<br/>
+
 ### In a net/http handler
 
 ```go
@@ -384,6 +396,8 @@ func (s *Server) HandleEnrich(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(res.Person)
 }
 ```
+
+<br/>
 
 ### Testing your application
 
@@ -630,6 +644,8 @@ credentials and personal data never appear in errors or formatted output.
 
 The runnable `Example*` functions in [example_test.go](example_test.go) run offline against a local TLS
 server.
+
+<br/>
 
 ### Live contract probe
 
