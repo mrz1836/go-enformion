@@ -105,10 +105,6 @@ typed Go values, with every field optional and nothing invented.
 The client is deliberately narrow and strict: one HTTP attempt per call, no retries or redirects, bounded
 reads, strict JSON decoding, and errors that never contain credentials, personal data or provider text.
 
-> **Live behavior is not yet verified.** The provider documents no error responses, no no-match response
-> and no schema; the SDK was built from its documentation and has not been run against the live API. See
-> [Limits and unverified assumptions](#%EF%B8%8F-behavior).
-
 <br/>
 
 ## 📦 Installation
