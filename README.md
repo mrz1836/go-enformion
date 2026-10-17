@@ -8,7 +8,7 @@
 
 <a href="https://github.com/mrz1836/go-enformion/releases"><img src="https://img.shields.io/github/release-pre/mrz1836/go-enformion?include_prereleases&style=flat-square&logo=github&color=black" alt="Release"></a>
 <a href="https://golang.org/"><img src="https://img.shields.io/github/go-mod/go-version/mrz1836/go-enformion?style=flat-square&logo=go&color=00ADD8" alt="Go Version"></a>
-<a href="https://github.com/mrz1836/go-enformion/blob/master/LICENSE"><img src="https://img.shields.io/github/license/mrz1836/go-enformion?style=flat-square&color=blue" alt="License"></a>
+<a href="https://github.com/mrz1836/go-enformion/blob/master/LICENSE"><img src="https://img.shields.io/github/license/mrz1836/go-enformion.svg?style=flat-square&color=blue" alt="License"></a>
 
 <br/>
 
