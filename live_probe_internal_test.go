@@ -140,7 +140,7 @@ func (lc *liveClient) report(t *testing.T, label string, ex *exchange) {
 	isError := "absent or not a boolean"
 	if kind, _ := checkStrict(ex.body); kind == "" {
 		env, _ := readObject(ex.body, envelopeNames(), false)
-		if v := string(env.fields[envIsError]); v == "true" || v == "false" {
+		if v := string(env.field(envIsError)); v == "true" || v == "false" {
 			isError = v
 		}
 	}

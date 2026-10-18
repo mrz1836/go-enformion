@@ -3,6 +3,7 @@ package enformion
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -151,6 +152,40 @@ func TestBoundsPath(t *testing.T) {
 	assert.Equal(t, "person.phones[3]", at("person.phones", 3).String())
 	assert.Equal(t, "person.phones[3].number", at("person.phones", 3).member("number"))
 	assert.Equal(t, "person.name.firstName", at("person.name", -1).member("firstName"))
+
+	t.Run("nested", func(t *testing.T) {
+		p := at("persons", 0).child("addresses").entry(2).child("highRiskMarker")
+		assert.Equal(t, "persons[0].addresses[2].highRiskMarker", p.String())
+		assert.Equal(t, "persons[0].addresses[2].highRiskMarker.isHighRisk", p.member("isHighRisk"))
+		assert.Equal(t, "persons[0].addresses[2]", at("persons", 0).child("addresses").entry(2).String())
+		assert.Equal(t, "persons[12]", at("persons", -1).entry(12).String())
+		assert.Equal(t, "persons[0].associates[1].emailAddresses[0].emailEngagementData.naics[2]",
+			at("persons", 0).child("associates").entry(1).child("emailAddresses").entry(0).
+				child("emailEngagementData").child("naics").entry(2).String(), "the deepest Person Search path")
+	})
+	t.Run("relative", func(t *testing.T) {
+		assert.Empty(t, relative().String())
+		assert.Equal(t, "[2]", relative().entry(2).String())
+		assert.Equal(t, "[2].zip", relative().entry(2).member("zip"))
+		assert.Equal(t, ".isHighRisk", relative().member("isHighRisk"))
+	})
+	t.Run("truncated", func(t *testing.T) {
+		p := at("a", 0)
+		for i := range maxPathDepth + 3 {
+			p = p.child("b" + strconv.Itoa(i)).entry(i)
+		}
+		assert.Equal(t, maxPathDepth, p.n, "a path stops at its deepest ancestor")
+		assert.Equal(t, "a[0].b0[0].b1[1].b2[2].b3[3].b4[8]", p.String(), "entry still indexes the deepest segment")
+		assert.Equal(t, p.String(), p.member("c"), "past the depth a member stays at its ancestor")
+	})
+	t.Run("zero path", func(t *testing.T) {
+		var p path
+		assert.NotPanics(t, func() {
+			assert.Empty(t, p.entry(3).String())
+			assert.Equal(t, "x", p.member("x"))
+			assert.Equal(t, "x[1]", p.child("x").entry(1).String())
+		})
+	})
 }
 
 // FuzzDecodeKey proves that the hand-written unescaper decodes every valid JSON

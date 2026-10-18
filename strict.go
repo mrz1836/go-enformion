@@ -334,6 +334,16 @@ func foldIndex(key []byte, names []string) int {
 	return -1
 }
 
+// slotIndex is foldIndex against the names of slots.
+func slotIndex(key []byte, slots []slot) int {
+	for i := range slots {
+		if name := slots[i].name; len(key) == len(name) && asciiEqualFold(key, name) {
+			return i
+		}
+	}
+	return -1
+}
+
 func asciiEqualFold(a []byte, b string) bool {
 	for i := range len(a) {
 		x, y := a[i], b[i]

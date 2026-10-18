@@ -1,8 +1,10 @@
 package enformion
 
 import (
+	"bytes"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -187,6 +189,101 @@ func FuzzStrictOracle(f *testing.F) {
 			var decoded map[string]json.RawMessage
 			require.NoError(t, json.Unmarshal(data, &decoded))
 			assert.Len(t, members, len(decoded), "members sees every member once")
+		}
+	})
+}
+
+// fdASCIILower lowercases the ASCII letters of s only, as key matching does.
+func fdASCIILower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+// fdHasData is an independent oracle for hasData over a decoded JSON value: a
+// non-empty string, a non-zero number or true, at any depth.
+func fdHasData(v any) bool {
+	switch x := v.(type) {
+	case string:
+		return x != ""
+	case json.Number:
+		mantissa, _, _ := strings.Cut(strings.ToLower(string(x)), "e")
+		return strings.ContainsAny(mantissa, "123456789")
+	case bool:
+		return x
+	case map[string]any:
+		for _, e := range x {
+			if fdHasData(e) {
+				return true
+			}
+		}
+	case []any:
+		for _, e := range x {
+			if fdHasData(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// FuzzReadObject proves readObject against a json.Unmarshal oracle, for any
+// number of names inside and past the inline storage, and that it never
+// panics on any input.
+func FuzzReadObject(f *testing.F) {
+	for _, s := range fdStrictSeeds() {
+		f.Add([]byte(s), uint8(40))
+	}
+	f.Add([]byte(stManyKeys("k", 40, `,"K8":1`)), uint8(9))
+	f.Add([]byte(stManyKeys("k", 12, `,"x":{"y":[0,"z"]}`)), uint8(12))
+	f.Add([]byte(stManyKeys("K", 9, `,"k40":0`)), uint8(41))
+	f.Fuzz(func(t *testing.T, data []byte, n uint8) {
+		names := dcNames(int(n) % 48)
+		o, dup := readObject(data, names, true)
+		for i := -1; i <= len(names); i++ {
+			_ = o.field(i)
+		}
+		if kind, _ := checkStrict(data); kind != "" {
+			return
+		}
+		dec := json.NewDecoder(strings.NewReader(string(data)))
+		dec.UseNumber()
+		var decoded map[string]any
+		require.NoError(t, dec.Decode(&decoded))
+		var raws map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(data, &raws))
+
+		matches := make([][]string, len(names))
+		ignored := false
+		for key, v := range decoded {
+			i := slices.Index(names, fdASCIILower(key))
+			if i < 0 {
+				ignored = ignored || fdHasData(v)
+				continue
+			}
+			matches[i] = append(matches[i], key)
+		}
+		repeated := slices.ContainsFunc(matches, func(m []string) bool { return len(m) > 1 })
+		if repeated {
+			require.GreaterOrEqual(t, dup, 0, "a name two keys match is reported")
+			assert.Greater(t, len(matches[dup]), 1)
+			return
+		}
+		require.Equal(t, -1, dup)
+		assert.Equal(t, ignored, o.ignoredData)
+		for i, m := range matches {
+			if len(m) == 0 {
+				assert.Nil(t, o.field(i), "name %d", i)
+				continue
+			}
+			var got, want bytes.Buffer
+			require.NoError(t, json.Compact(&got, o.field(i)))
+			require.NoError(t, json.Compact(&want, raws[m[0]]))
+			assert.Equal(t, want.String(), got.String(), "name %d", i)
 		}
 	})
 }

@@ -92,6 +92,7 @@ var (
 	errProviderError    = errors.New("enformion: response envelope reports isError: true")
 	errUnrecognizedData = errors.New("enformion: response data is only under unrecognized keys")
 	errTooManyEntries   = errors.New("enformion: response collection exceeds the entry limit")
+	errDecodeBudget     = errors.New("enformion: response decodes to more than the decode budget")
 
 	// Transport classes. The original error is discarded, because standard
 	// library errors can quote server bytes such as a malformed status line.
