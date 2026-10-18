@@ -341,3 +341,95 @@ func TestMemoryAllocations(t *testing.T) {
 	t.Logf("%d bytes allocated to reject a declared length of 1 TiB", perOp)
 	assert.Less(t, perOp, int64(16<<10))
 }
+
+// TestMemorySearchAllocations guards allocation counts and bytes on the
+// common Person Search paths. The ceilings sit about 25% above the measured
+// values; the counts include the in-memory transport's own response.
+func TestMemorySearchAllocations(t *testing.T) {
+	testutil.SkipUnderRace(t)
+	page := searchPage(t, 10)
+	pageClient := newTransportClient(t, testutil.StaticTransport(http.StatusOK, page))
+	emptyClient := newTransportClient(t, testutil.StaticTransport(http.StatusOK, emptySearchPage))
+	call := func(c *enformion.Client) func() {
+		return func() { _, _ = c.SearchPersons(t.Context(), validSearch()) }
+	}
+	testutil.CheckCeilings(t, []testutil.Ceiling{
+		{Name: "ten-person page", Max: 1840, Run: call(pageClient)},
+		{Name: "no persons", Max: 56, Run: call(emptyClient)},
+	})
+
+	perOp := testutil.BytesPerOp(call(pageClient))
+	t.Logf("%d bytes allocated for a %d-byte ten-person page", perOp, len(page))
+	// The body read, and a result smaller than the body.
+	assert.Less(t, perOp, int64(3*len(page)))
+}
+
+// TestMemorySearchResponseLimit proves the per-operation default limits: a
+// Person Search page may be up to 16 MiB while Contact Enrichment stays at
+// 1 MiB, and WithMaxResponseBytes, once given, governs both. Over the limit is
+// ErrResponseTooLarge on HTTP 200, after a call that may have been billed, and
+// the body is closed once.
+func TestMemorySearchResponseLimit(t *testing.T) {
+	// A page of just over 1 MiB: valid JSON, over the Contact default.
+	overContact := `{"isError":false,"persons":[]}` + strings.Repeat(" ", 1<<20)
+	tests := []struct {
+		name     string
+		opts     []enformion.Option
+		body     string
+		length   int64
+		search   enformion.FailureKind
+		enrich   enformion.FailureKind
+		readsAll bool
+	}{
+		{
+			name: "over 1 MiB by default", body: overContact, length: int64(len(overContact)),
+			enrich: enformion.FailureResponseTooLarge, readsAll: true,
+		},
+		{
+			name: "16 MiB declared by default", body: "", length: 16<<20 + 1,
+			search: enformion.FailureResponseTooLarge, enrich: enformion.FailureResponseTooLarge,
+		},
+		{
+			name: "an explicit limit governs both", opts: []enformion.Option{enformion.WithMaxResponseBytes(4096)},
+			body: overContact, length: -1,
+			search: enformion.FailureResponseTooLarge, enrich: enformion.FailureResponseTooLarge,
+		},
+		{
+			name: "an explicit 16 MiB applies to Contact too", opts: []enformion.Option{enformion.WithMaxResponseBytes(16 << 20)},
+			body: overContact, length: int64(len(overContact)), readsAll: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var body *testutil.Body
+			rt := testutil.Transport(http.StatusOK, tt.length, func() io.ReadCloser {
+				body = testutil.NewBody(tt.body)
+				return body
+			})
+			c := newTransportClient(t, rt, tt.opts...)
+
+			res, err := c.SearchPersons(t.Context(), validSearch())
+			require.NotNil(t, body)
+			assert.Equal(t, 1, body.Closes(), "the body is closed exactly once")
+			if tt.search == "" {
+				require.NoError(t, err)
+				assert.Nil(t, res.Persons)
+			} else {
+				ce := callError(t, err)
+				assert.Equal(t, tt.search, ce.Kind)
+				assert.Equal(t, http.StatusOK, ce.StatusCode)
+				require.ErrorIs(t, err, enformion.ErrResponseTooLarge)
+			}
+			if tt.readsAll {
+				assert.Equal(t, int64(len(tt.body)), body.BytesRead())
+			}
+
+			_, err = c.EnrichContact(t.Context(), validRequest())
+			if tt.enrich == "" {
+				require.NoError(t, err)
+				return
+			}
+			assert.Equal(t, tt.enrich, callError(t, err).Kind)
+		})
+	}
+}

@@ -61,3 +61,46 @@ func BenchmarkEnrichContactValidationError(b *testing.B) {
 		b.Fatalf("%d attempts, want 0", ct.Attempts())
 	}
 }
+
+func BenchmarkSearchPersonsPage(b *testing.B) {
+	bmSearch(b, searchPage(b, 10), 10)
+}
+
+func BenchmarkSearchPersonsNoPersons(b *testing.B) {
+	bmSearch(b, emptySearchPage, 0)
+}
+
+// bmSearch runs SearchPersons against an in-memory 200 response with body,
+// which must hold n persons.
+func bmSearch(b *testing.B, body string, n int) {
+	b.Helper()
+	client := newTransportClient(b, testutil.StaticTransport(http.StatusOK, body))
+	req := validSearch()
+	ctx := b.Context()
+	b.ReportAllocs()
+	for b.Loop() {
+		res, err := client.SearchPersons(ctx, req)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(res.Persons) != n {
+			b.Fatalf("%d persons, want %d", len(res.Persons), n)
+		}
+	}
+}
+
+func BenchmarkSearchPersonsValidationError(b *testing.B) {
+	ct := &testutil.CountingTransport{Next: testutil.StaticTransport(http.StatusOK, `{}`)}
+	client := newTransportClient(b, ct)
+	req := enformion.PersonSearchRequest{Mode: enformion.PersonSearchModeTeaser, Page: 2}
+	ctx := b.Context()
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := client.SearchPersons(ctx, req); err == nil {
+			b.Fatal("want a validation error")
+		}
+	}
+	if ct.Attempts() != 0 {
+		b.Fatalf("%d attempts, want 0", ct.Attempts())
+	}
+}

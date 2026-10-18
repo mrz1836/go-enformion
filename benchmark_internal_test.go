@@ -2,7 +2,9 @@ package enformion
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/mrz1836/go-enformion/internal/testutil"
@@ -90,6 +92,69 @@ func BenchmarkEncodeRequest(b *testing.B) {
 
 func BenchmarkValidateRequest(b *testing.B) {
 	req := rqFull()
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := req.validate(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// bmSearchPage returns a Person Search page of n copies of the provider-shaped
+// fixture's first person, the fullest one, in the fixture's envelope.
+func bmSearchPage(tb testing.TB, n int) []byte {
+	tb.Helper()
+	page := testutil.Fixture(tb, "provider/person-search-page.json")
+	var env struct {
+		Persons []json.RawMessage `json:"persons"`
+	}
+	if err := json.Unmarshal(page, &env); err != nil || len(env.Persons) == 0 {
+		tb.Fatalf("the page fixture must hold persons: %v", err)
+	}
+	persons := bytes.Repeat(append(slices.Clone(env.Persons[0]), ','), n)
+	return []byte(`{"persons":[` + string(persons[:len(persons)-1]) +
+		`],"isError":false,"error":{"inputErrors":[],"warnings":[]},"requestId":"synthetic-request-0110"}`)
+}
+
+func BenchmarkSearchDecodePage(b *testing.B) {
+	bmSearchDecode(b, bmSearchPage(b, 10), 10)
+}
+
+func BenchmarkSearchDecodeLarge(b *testing.B) {
+	body := bmSearchPage(b, 500)
+	if len(body) > maxResponseBytesLimit {
+		b.Fatalf("body is %d bytes, over the limit", len(body))
+	}
+	bmSearchDecode(b, body, 500)
+}
+
+// bmSearchDecode decodes body as an HTTP 200 Person Search response, which
+// must hold n persons.
+func bmSearchDecode(b *testing.B, body []byte, n int) {
+	b.Helper()
+	ex := &exchange{status: http.StatusOK, body: body}
+	b.SetBytes(int64(len(body)))
+	b.ReportAllocs()
+	for b.Loop() {
+		res, err := decodeSearchPersons(ex, false)
+		if err != nil || len(res.Persons) != n {
+			b.Fatalf("decode failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkSearchEncodeRequest(b *testing.B) {
+	req := sqFull()
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := req.encode(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSearchValidateRequest(b *testing.B) {
+	req := sqFull()
 	b.ReportAllocs()
 	for b.Loop() {
 		if err := req.validate(); err != nil {

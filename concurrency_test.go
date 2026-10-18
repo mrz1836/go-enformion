@@ -115,3 +115,95 @@ func TestConcurrencySharedClient(t *testing.T) {
 	}
 	assert.Equal(t, "cc00x0@example.com", calls[0][0].req.Email, "the request is never changed")
 }
+
+// ccMixedEcho answers Contact Enrichment as ccEcho does, and Person Search
+// with a page whose one person is built from the session ID's marker and
+// whose criteriaType echoes the search type header.
+func ccMixedEcho(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/PersonSearch" {
+		ccEcho(w, r)
+		return
+	}
+	marker, ok := strings.CutPrefix(r.Header.Get("Galaxy-Client-Session-Id"), "session-")
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	out := map[string]any{
+		"isError":      false,
+		"requestId":    "req-" + marker,
+		"criteriaType": map[string]any{"searchType": r.Header.Get("Galaxy-Search-Type")},
+		"persons":      []any{map[string]any{"tahoeId": "G-" + marker, "fullName": marker}},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		return
+	}
+}
+
+// TestConcurrencyMixedOperations shares one Client across goroutines that
+// make Contact Enrichment calls and Person Search calls in every mode, and
+// checks that each caller gets its own response, from its own operation.
+func TestConcurrencyMixedOperations(t *testing.T) {
+	const goroutines = 40
+	c, srv := newServerClient(t, ccMixedEcho)
+	modes := searchModes()
+
+	type outcome struct {
+		marker string
+		mode   enformion.PersonSearchMode // "" for Contact Enrichment
+		search *enformion.PersonSearchResult
+		enrich *enformion.EnrichContactResult
+		err    error
+	}
+	outcomes := make([]outcome, goroutines)
+	var wg sync.WaitGroup
+	for g := range goroutines {
+		wg.Go(func() {
+			o := outcome{marker: fmt.Sprintf("mx%02d", g)}
+			if g%5 == 0 {
+				req := validRequest()
+				req.Email = o.marker + "@example.com"
+				req.SessionID = "session-" + o.marker
+				o.enrich, o.err = c.EnrichContact(t.Context(), req)
+			} else {
+				o.mode = modes[g%len(modes)]
+				req := validSearch()
+				req.Mode = o.mode
+				req.SessionID = "session-" + o.marker
+				o.search, o.err = c.SearchPersons(t.Context(), req)
+			}
+			outcomes[g] = o
+		})
+	}
+	wg.Wait()
+
+	for _, o := range outcomes {
+		require.NoError(t, o.err)
+		if o.mode == "" {
+			require.NotNil(t, o.enrich.Person)
+			assert.Equal(t, o.marker, o.enrich.Person.Name.FirstName, "no cross-talk between operations")
+			assert.Equal(t, "req-"+o.marker, o.enrich.RequestID)
+			continue
+		}
+		require.Len(t, o.search.Persons, 1)
+		assert.Equal(t, "G-"+o.marker, o.search.Persons[0].TahoeID, "no cross-talk between callers")
+		assert.Equal(t, "req-"+o.marker, o.search.RequestID)
+		assert.JSONEq(t, `{"searchType":"`+string(o.mode)+`"}`, string(o.search.CriteriaType), "each call carries its own mode")
+	}
+
+	reqs := srv.Requests()
+	require.Len(t, reqs, goroutines)
+	for _, r := range reqs {
+		switch r.URL {
+		case "/Contact/Enrich":
+			assert.Equal(t, []string{"DevAPIContactEnrich"}, r.Header.Values("Galaxy-Search-Type"))
+		case "/PersonSearch":
+			assert.Equal(t, `{"FirstName":"Riley","LastName":"Sample"}`, string(r.Body)) //nolint:testifylint // byte-exact, not just equivalent JSON
+			assert.Contains(t, modes, enformion.PersonSearchMode(r.Header.Get("Galaxy-Search-Type")))
+		default:
+			t.Errorf("unexpected path %q", r.URL)
+		}
+		assert.Equal(t, []string{testKeyName}, r.Header.Values("Galaxy-Ap-Name"))
+	}
+}

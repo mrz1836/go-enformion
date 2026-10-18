@@ -45,9 +45,13 @@ var (
 	// status other than 200 outside the 4xx and 5xx ranges (including a 1xx,
 	// another 2xx, a redirect, which is never followed, and anything from 600
 	// on), a body that is not a JSON object, an isError flag that is missing or
-	// not a boolean, or a person, its name, or one of its address, phone or
-	// email entries whose only data is under keys this SDK does not decode. The
-	// provider may already have processed and billed the request.
+	// not a boolean, a Person Search body without its persons member, or a
+	// record whose only data is under keys this SDK does not decode: a Contact
+	// Enrichment person, its name, or one of its address, phone or email
+	// entries, or a Person Search person or one of its names, addresses,
+	// phones, emails, locations, relatives, associates, dates of birth or
+	// death records. The provider may already have processed and billed the
+	// request.
 	ErrUnexpectedResponse = errors.New("enformion: unexpected response")
 
 	// ErrMalformedResponse reports an HTTP 200 body that is not valid UTF-8 or
@@ -57,10 +61,12 @@ var (
 	ErrMalformedResponse = errors.New("enformion: malformed response")
 
 	// ErrResponseTooLarge reports an HTTP 200 body larger than the configured
-	// limit (see WithMaxResponseBytes), or a person address, phone or email
-	// list with more than 1,000 entries, an SDK safety bound (the provider
-	// documents at most five). The provider may already have processed and
-	// billed the request.
+	// limit (see WithMaxResponseBytes), a decoded list with more than 1,000
+	// entries, an SDK safety bound (the provider documents at most five per
+	// Contact Enrichment person list), or a Person Search body that would
+	// decode to more than four times its size plus 1 MiB, another SDK bound
+	// that keeps a hostile response from costing many times its size in
+	// memory. The provider may already have processed and billed the request.
 	ErrResponseTooLarge = errors.New("enformion: response too large")
 
 	// ErrTransport reports a failure in transit, such as DNS, connection, TLS or
@@ -92,6 +98,8 @@ var (
 	errProviderError    = errors.New("enformion: response envelope reports isError: true")
 	errUnrecognizedData = errors.New("enformion: response data is only under unrecognized keys")
 	errTooManyEntries   = errors.New("enformion: response collection exceeds the entry limit")
+	errDecodeBudget     = errors.New("enformion: response decodes to more than the decode budget")
+	errMissingMember    = errors.New("enformion: response lacks a required member")
 
 	// Transport classes. The original error is discarded, because standard
 	// library errors can quote server bytes such as a malformed status line.
@@ -151,8 +159,9 @@ const (
 
 // ValidationError describes a local validation failure: nothing was sent. Err
 // is ErrInvalidConfig or ErrInvalidRequest. Field names the argument, option or
-// request field, such as "DOB" or "keyPassword", and Reason is a short fixed
-// code, such as "invalid_format". Neither ever contains the rejected value.
+// request field, with a list index where it has one, such as "DOB",
+// "Addresses[1].County" or "keyPassword", and Reason is a short fixed code,
+// such as "invalid_format". Neither ever contains the rejected value.
 type ValidationError struct {
 	Err    error
 	Field  string

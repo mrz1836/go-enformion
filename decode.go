@@ -3,6 +3,7 @@ package enformion
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strconv"
 	"unicode/utf8"
 )
@@ -17,6 +18,14 @@ const (
 	// emails). The provider documents at most five; the bound keeps a hostile
 	// response from costing many times its own size in memory.
 	maxListEntries = 1000
+
+	// budgetPerBodyByte and budgetSlack size a decode budget: what decoding a
+	// body may keep, in approximate bytes, is budgetPerBodyByte times the
+	// body's length plus budgetSlack. Real responses decode to less than their
+	// own size; a body of nested empty entries would otherwise decode to more
+	// than a hundred times it.
+	budgetPerBodyByte = 4
+	budgetSlack       = 1 << 20
 )
 
 // Envelope members this SDK decodes, by index into envelopeNames. Everything
@@ -46,8 +55,20 @@ const (
 	personEmails
 )
 
-// maxFields is the most members any decoded object has.
-const maxFields = 7
+// Object and path storage.
+const (
+	// inlineFields is how many members an object holds without allocating:
+	// every Contact Enrichment object fits.
+	inlineFields = 8
+
+	// maxSlots is the widest slot table that decodes without allocating: a
+	// Person Search address has 35 members.
+	maxSlots = 40
+
+	// maxPathDepth is how many segments a JSON path holds, such as the five of
+	// "persons[0].associates[1].emailAddresses[0].emailEngagementData.naics[2]".
+	maxPathDepth = 6
+)
 
 // decodeError is a decoding failure at a JSON path, such as
 // "person.phones[1].isConnected". It becomes a CallError once the request ID is
@@ -82,53 +103,144 @@ func tooManyEntries(field string) *decodeError {
 	return &decodeError{kind: FailureResponseTooLarge, cause: errTooManyEntries, field: field}
 }
 
-// path names an object for error messages, rendered only when an error needs
-// it: a base such as "person.phones" and, for a list entry, its index.
-type path struct {
-	base  string
+// pathSeg is one segment of a path: a member name, or a dotted base such as
+// "person.phones", and its list index, or -1 when it is not a list entry.
+type pathSeg struct {
+	name  string
 	index int
 }
 
-// at returns the path of the entry at index i of the list at base.
-func at(base string, i int) path { return path{base: base, index: i} }
-
-// String renders the path, such as "person.phones[1]".
-func (p path) String() string {
-	if p.index < 0 {
-		return p.base
-	}
-	return p.base + "[" + strconv.Itoa(p.index) + "]"
+// path names a JSON location for error messages, rendered only when an error
+// needs it. It is a small value: building one never allocates. A path holds at
+// most maxPathDepth segments; deeper ones stay at their deepest ancestor.
+type path struct {
+	segs [maxPathDepth]pathSeg
+	n    int
 }
 
-// member renders the path of the member name inside p.
-func (p path) member(name string) string { return p.String() + "." + name }
+// at returns the path of the entry at index i of the list at base, or of base
+// itself when i is -1.
+func at(base string, i int) path {
+	return path{segs: [maxPathDepth]pathSeg{{name: base, index: i}}, n: 1}
+}
+
+// relative returns the root of a path relative to a member, which renders as
+// "": an entry of a list there renders as "[2]", and a member inside it as
+// ".zip", ready to follow the member's own path.
+func relative() path { return at("", -1) }
+
+// String renders the path, such as "person.phones[1]" or
+// "persons[0].addresses[2].highRiskMarker".
+func (p path) String() string {
+	var b []byte
+	for i, s := range p.segs[:p.n] {
+		if i > 0 {
+			b = append(b, '.')
+		}
+		b = append(b, s.name...)
+		if s.index >= 0 {
+			b = append(b, '[')
+			b = strconv.AppendInt(b, int64(s.index), 10)
+			b = append(b, ']')
+		}
+	}
+	return string(b)
+}
+
+// child returns the path of the member name inside p. Past maxPathDepth it
+// returns p unchanged.
+func (p path) child(name string) path {
+	if p.n < len(p.segs) {
+		p.segs[p.n] = pathSeg{name: name, index: -1}
+		p.n++
+	}
+	return p
+}
+
+// entry returns the path of the entry at index i of the list at p.
+func (p path) entry(i int) path {
+	if p.n > 0 {
+		p.segs[p.n-1].index = i
+	}
+	return p
+}
+
+// member renders the path of the member name inside p. The result is always a
+// new string, so that name, often a slot's, never escapes through it.
+func (p path) member(name string) string { return p.child(name).String() }
 
 // object is the recognized members of one JSON object, by index into the names
-// it was read with, and whether any other member holds data.
+// it was read with, and whether any other member holds data. The first
+// inlineFields members are held inline; more is allocated only for an object
+// read with more names.
 type object struct {
-	fields      [maxFields][]byte
+	inline      [inlineFields][]byte
+	more        [][]byte
 	ignoredData bool
+}
+
+// field returns member i, or nil when it is absent or i is out of range.
+func (o *object) field(i int) []byte {
+	switch {
+	case i >= 0 && i < inlineFields:
+		return o.inline[i]
+	case i >= inlineFields && i-inlineFields < len(o.more):
+		return o.more[i-inlineFields]
+	}
+	return nil
+}
+
+// keep records the member value whose key matched index i, or no name when i
+// is -1: inline or, past the inline storage, in more; unmatched, into
+// ignoredData when track is set. A member matched twice records its index in
+// dup, once. An index past more is ignored.
+func (o *object) keep(i int, value []byte, more [][]byte, track bool, dup *int) {
+	var dst *[]byte
+	switch {
+	case i < 0:
+		if track && !o.ignoredData {
+			o.ignoredData = hasData(value)
+		}
+		return
+	case i < inlineFields:
+		dst = &o.inline[i]
+	case i-inlineFields < len(more):
+		dst = &more[i-inlineFields]
+	default:
+		return
+	}
+	if *dst != nil {
+		if *dup < 0 {
+			*dup = i
+		}
+		return
+	}
+	*dst = value
 }
 
 // readObject reads the JSON object raw against names, matching keys without
 // regard to ASCII case. dup is the index of a name two members match, or -1.
 // ignoredData is computed only when track is set.
 func readObject(raw []byte, names []string, track bool) (o object, dup int) {
+	if n := len(names) - inlineFields; n > 0 {
+		o.more = make([][]byte, n)
+	}
 	dup = -1
 	for key, value := range members(raw) {
-		i := foldIndex(keyBytes(key), names)
-		switch {
-		case i < 0:
-			if track && !o.ignoredData {
-				o.ignoredData = hasData(value)
-			}
-		case o.fields[i] != nil:
-			if dup < 0 {
-				dup = i
-			}
-		default:
-			o.fields[i] = value
-		}
+		o.keep(foldIndex(keyBytes(key), names), value, o.more, track, &dup)
+	}
+	return o, dup
+}
+
+// readSlots is readObject against the names of slots, except that members
+// past the inline storage are kept in more, which needs len(slots) -
+// inlineFields entries, and o.more stays nil. Matching the slots in place,
+// rather than copying their names out, and never holding more in o, keep every
+// slot's destination, and more itself, on the caller's stack.
+func readSlots(raw []byte, slots []slot, track bool, more [][]byte) (o object, dup int) {
+	dup = -1
+	for key, value := range members(raw) {
+		o.keep(slotIndex(keyBytes(key), slots), value, more, track, &dup)
 	}
 	return o, dup
 }
@@ -153,17 +265,17 @@ func decodeEnrichContact(ex *exchange, withDiagnostics bool) (*EnrichContactResu
 	env, dup := readObject(ex.body, names, false)
 	var requestID string
 	if dup != envRequestID {
-		requestID = providerRequestID(env.fields[envRequestID])
+		requestID = providerRequestID(env.field(envRequestID))
 	}
 	if dup >= 0 {
 		return nil, duplicated(names[dup]).callError(requestID)
 	}
 
-	switch string(env.fields[envIsError]) {
+	switch string(env.field(envIsError)) {
 	case "false":
 	case "true":
 		ce := newCallErrorWithDiagnostics(FailureRejected, ex.status, errProviderError,
-			envelopeDiagnostics(&env, withDiagnostics))
+			envelopeDiagnostics(env.field(envMessage), env.field(envError), withDiagnostics))
 		ce.RequestID = requestID
 		return nil, ce
 	default:
@@ -171,15 +283,15 @@ func decodeEnrichContact(ex *exchange, withDiagnostics bool) (*EnrichContactResu
 		return nil, derr.callError(requestID)
 	}
 
-	person, derr := decodePerson(env.fields[envPerson])
+	person, derr := decodePerson(env.field(envPerson))
 	if derr != nil {
 		return nil, derr.callError(requestID)
 	}
-	score, ok := decodeInt(env.fields[envIdentityScore])
+	score, ok := decodeInt(env.field(envIdentityScore))
 	if !ok {
 		return nil, wrongType(names[envIdentityScore]).callError(requestID)
 	}
-	diag, derr := decodeDiagnostics(env.fields[envMessage], env.fields[envError], true)
+	diag, derr := decodeDiagnostics(env.field(envMessage), env.field(envError), true)
 	if derr != nil {
 		return nil, derr.callError(requestID)
 	}
@@ -210,16 +322,17 @@ func failureEnvelope(body []byte, withDiagnostics bool) (string, ProviderDiagnos
 	if dup >= 0 {
 		return "", ProviderDiagnostics{}
 	}
-	return providerRequestID(env.fields[envRequestID]), envelopeDiagnostics(&env, withDiagnostics)
+	return providerRequestID(env.field(envRequestID)), envelopeDiagnostics(env.field(envMessage), env.field(envError), withDiagnostics)
 }
 
-// envelopeDiagnostics returns the diagnostics of a failed call's envelope,
-// skipping any member of the wrong type, when enabled, and none otherwise.
-func envelopeDiagnostics(env *object, enabled bool) ProviderDiagnostics {
+// envelopeDiagnostics returns the diagnostics of a failed call's envelope
+// message and error members, skipping any member of the wrong type, when
+// enabled, and none otherwise.
+func envelopeDiagnostics(msgRaw, errRaw []byte, enabled bool) ProviderDiagnostics {
 	if !enabled {
 		return ProviderDiagnostics{}
 	}
-	diag, _ := decodeDiagnostics(env.fields[envMessage], env.fields[envError], false)
+	diag, _ := decodeDiagnostics(msgRaw, errRaw, false)
 	return diag
 }
 
@@ -277,22 +390,22 @@ func decodePerson(raw []byte) (*Person, *decodeError) {
 	}{{personID, &p.PersonID}, {personAge, &p.Age}, {personPartialDOB, &p.PartialDOB}}
 	for _, t := range texts {
 		var ok bool
-		if *t.dst, ok = decodeString(o.fields[t.i]); !ok {
+		if *t.dst, ok = decodeString(o.field(t.i)); !ok {
 			return nil, wrongType("person." + names[t.i])
 		}
 	}
-	nameData, derr := decodeName(o.fields[personName], &p.Name)
+	nameData, derr := decodeName(o.field(personName), &p.Name)
 	if derr != nil {
 		return nil, derr
 	}
 	var addrData, phoneData, emailData bool
-	if p.Addresses, addrData, derr = decodeList(o.fields[personAddresses], "person.addresses", decodeAddress); derr != nil {
+	if p.Addresses, addrData, derr = decodeList(o.field(personAddresses), at("person.addresses", -1), nil, decodeAddress); derr != nil {
 		return nil, derr
 	}
-	if p.Phones, phoneData, derr = decodeList(o.fields[personPhones], "person.phones", decodePhone); derr != nil {
+	if p.Phones, phoneData, derr = decodeList(o.field(personPhones), at("person.phones", -1), nil, decodePhone); derr != nil {
 		return nil, derr
 	}
-	if p.Emails, emailData, derr = decodeList(o.fields[personEmails], "person.emails", decodeEmail); derr != nil {
+	if p.Emails, emailData, derr = decodeList(o.field(personEmails), at("person.emails", -1), nil, decodeEmail); derr != nil {
 		return nil, derr
 	}
 	if p.PersonID != "" || p.Age != "" || p.PartialDOB != "" || nameData || addrData || phoneData || emailData {
@@ -304,11 +417,64 @@ func decodePerson(raw []byte) (*Person, *decodeError) {
 	return nil, nil
 }
 
-// slot is one member of a flat object: a string or an optional boolean.
+// slot is one member of an object and where it is decoded to. Exactly one
+// destination is set:
+//   - str: a string; data when non-empty
+//   - flag: an optional boolean; data when true
+//   - num: an optional integer (see decodeInt); data when non-zero, while a
+//     reported 0 is still kept as a pointer to 0
+//   - raw: any JSON value, kept normalized (see keepRaw); data when it holds
+//     any (see hasData)
+//   - sub: a nested object or list, decoded by the function, which reports
+//     whether it holds data. It decodes at a path relative to the member (see
+//     relative), and decode adds the member's own path to any failure. A
+//     slot's name therefore never reaches the function: as an argument of an
+//     indirect call, it would move every slot's destination to the heap.
 type slot struct {
 	name string
 	str  *string
 	flag **bool
+	num  **int
+	raw  *json.RawMessage
+	sub  func(raw []byte, p path) (bool, *decodeError)
+}
+
+// decode decodes the member raw (nil when absent) of the object at p into the
+// slot's destination, charging b for a raw value, and reports whether it holds
+// data.
+func (s *slot) decode(raw []byte, p path, b *budget) (bool, *decodeError) {
+	var ok bool
+	switch {
+	case s.str != nil:
+		*s.str, ok = decodeString(raw)
+		return *s.str != "", s.check(ok, p)
+	case s.flag != nil:
+		*s.flag, ok = decodeBool(raw)
+		return *s.flag != nil && **s.flag, s.check(ok, p)
+	case s.num != nil:
+		*s.num, ok = decodeInt(raw)
+		return *s.num != nil && **s.num != 0, s.check(ok, p)
+	case s.raw != nil:
+		var data bool
+		var derr *decodeError
+		*s.raw, data, derr = keepRaw(raw, p.child(s.name), b)
+		return data, derr
+	case s.sub != nil:
+		data, derr := s.sub(raw, relative())
+		if derr != nil {
+			derr.field = p.member(s.name) + derr.field
+		}
+		return data, derr
+	}
+	return false, nil
+}
+
+// check returns the wrong-type failure of the slot's member inside p unless ok.
+func (s *slot) check(ok bool, p path) *decodeError {
+	if ok {
+		return nil
+	}
+	return wrongType(p.member(s.name))
 }
 
 // decodeFlat decodes the flat JSON object raw, at path p, into slots and
@@ -316,33 +482,64 @@ type slot struct {
 // true). An object whose only data is under other keys fails as an unexpected
 // response.
 func decodeFlat(raw []byte, p path, slots []slot) (bool, *decodeError) {
-	var names [maxFields]string
-	for i, s := range slots {
-		names[i] = s.name
+	return decodeSlots(raw, p, nil, true, slots)
+}
+
+// decodeSlots decodes the JSON object raw, at path p, into slots, charging b
+// (nil for no budget) for raw values, and reports whether any recognized member
+// holds data. When track is set, an object whose only data is under other keys
+// fails as an unexpected response; otherwise other members are ignored.
+func decodeSlots(raw []byte, p path, b *budget, track bool, slots []slot) (bool, *decodeError) {
+	switch n := len(slots) - inlineFields; {
+	case n <= 0:
+		return decodeSlotsIn(raw, p, b, track, slots, nil)
+	case n <= maxSlots-inlineFields:
+		// A wider object keeps its other members on this stack rather than
+		// the heap; only wide objects pay for zeroing it.
+		var more [maxSlots - inlineFields][]byte
+		return decodeSlotsIn(raw, p, b, track, slots, more[:n])
+	default:
+		return decodeSlotsIn(raw, p, b, track, slots, make([][]byte, n))
 	}
-	o, dup := readObject(raw, names[:len(slots)], true)
+}
+
+// decodeSlotsIn is decodeSlots with more, the storage for members past the
+// inline storage (see readSlots).
+func decodeSlotsIn(raw []byte, p path, b *budget, track bool, slots []slot, more [][]byte) (bool, *decodeError) {
+	o, dup := readSlots(raw, slots, track, more)
 	if dup >= 0 {
-		return false, duplicated(p.member(names[dup]))
+		return false, duplicated(p.member(slots[dup].name))
 	}
 	data := false
-	for i, s := range slots {
-		var ok bool
-		if s.str != nil {
-			if *s.str, ok = decodeString(o.fields[i]); !ok {
-				return false, wrongType(p.member(s.name))
-			}
-			data = data || *s.str != ""
-			continue
+	for i := range slots {
+		var member []byte
+		if i < inlineFields {
+			member = o.inline[i]
+		} else if k := i - inlineFields; k < len(more) {
+			member = more[k]
 		}
-		if *s.flag, ok = decodeBool(o.fields[i]); !ok {
-			return false, wrongType(p.member(s.name))
+		d, derr := slots[i].decode(member, p, b)
+		if derr != nil {
+			return false, derr
 		}
-		data = data || (*s.flag != nil && **s.flag)
+		data = data || d
 	}
 	if !data && o.ignoredData {
 		return false, unrecognized(p.String())
 	}
 	return data, nil
+}
+
+// decodeObject decodes the member raw, at path p, as a JSON object of slots
+// (see decodeSlots). Absent or null is no data; any other type fails.
+func decodeObject(raw []byte, p path, b *budget, track bool, slots []slot) (bool, *decodeError) {
+	if isNull(raw) {
+		return false, nil
+	}
+	if raw[0] != '{' {
+		return false, wrongType(p.String())
+	}
+	return decodeSlots(raw, p, b, track, slots)
 }
 
 // decodeName decodes person.name into n.
@@ -397,17 +594,36 @@ func decodeEmail(raw []byte, p path) (Email, bool, *decodeError) {
 	return e, data, derr
 }
 
-// decodeList decodes a JSON array of objects. Every entry is kept, in the
-// provider's order, except JSON null elements, which are not entries; more
-// than maxListEntries entries fail the call. data reports whether any entry
-// holds recognized data. An empty list is nil.
-func decodeList[T any](raw []byte, field string, decode func([]byte, path) (T, bool, *decodeError)) ([]T, bool, *decodeError) {
+// decodeList decodes the JSON array of objects at path p (see decodeArray),
+// failing on an element that is not an object.
+func decodeList[T any](raw []byte, p path, b *budget, decode func([]byte, path) (T, bool, *decodeError)) ([]T, bool, *decodeError) {
+	return decodeArray(raw, p, b, func(el []byte, ep path) (T, bool, *decodeError) {
+		if el[0] != '{' {
+			var zero T
+			return zero, false, wrongType(ep.String())
+		}
+		return decode(el, ep)
+	})
+}
+
+// decodeArray decodes the JSON array raw at path p, each element with decode at
+// its own path. Every entry is kept, in the provider's order, except JSON null
+// elements, which are not entries but still count in the index; more than
+// maxListEntries entries fail the call. Each entry is charged its size against
+// b, when it is not nil, before it is decoded. data reports whether any entry
+// holds data. An empty list is nil.
+func decodeArray[T any](raw []byte, p path, b *budget, decode func([]byte, path) (T, bool, *decodeError)) ([]T, bool, *decodeError) {
 	if isNull(raw) {
 		return nil, false, nil
 	}
 	if raw[0] != '[' {
-		return nil, false, wrongType(field)
+		return nil, false, wrongType(p.String())
 	}
+	if b != nil {
+		return decodeBudgeted(raw, p, b, decode)
+	}
+	// Grown from nil, so that the compiler may grow a short list on the stack
+	// and allocate it once, at its size, when it is returned.
 	var (
 		out  []T
 		data bool
@@ -415,23 +631,131 @@ func decodeList[T any](raw []byte, field string, decode func([]byte, path) (T, b
 	)
 	for el := range elements(raw) {
 		i++
-		if isNull(el) {
-			continue
-		}
-		if len(out) == maxListEntries {
-			return nil, false, tooManyEntries(field)
-		}
-		if el[0] != '{' {
-			return nil, false, wrongType(at(field, i).String())
-		}
-		v, d, derr := decode(el, at(field, i))
+		v, d, skip, derr := arrayEntry(el, p.entry(i), len(out), nil, 0, decode)
 		if derr != nil {
 			return nil, false, derr
 		}
-		out = append(out, v)
-		data = data || d
+		if !skip {
+			out = append(out, v)
+			data = data || d
+		}
 	}
 	return out, data, nil
+}
+
+// decodeBudgeted is decodeArray for a non-empty array with a budget. The list
+// is allocated once, at its size, so that growing it leaves no garbage beyond
+// what the budget counts.
+func decodeBudgeted[T any](raw []byte, p path, b *budget, decode func([]byte, path) (T, bool, *decodeError)) ([]T, bool, *decodeError) {
+	n := countEntries(raw)
+	if n == 0 {
+		return nil, false, nil
+	}
+	var (
+		out  = make([]T, 0, n)
+		size = int(reflect.TypeFor[T]().Size())
+		data bool
+		i    = -1
+	)
+	for el := range elements(raw) {
+		i++
+		v, d, skip, derr := arrayEntry(el, p.entry(i), len(out), b, size, decode)
+		if derr != nil {
+			return nil, false, derr
+		}
+		if !skip {
+			out = append(out, v)
+			data = data || d
+		}
+	}
+	return out, data, nil
+}
+
+// arrayEntry decodes the array element el at path ep, after n entries,
+// charging size against b. skip reports a JSON null element, which is not an
+// entry. More than maxListEntries entries fail at the list's path.
+func arrayEntry[T any](el []byte, ep path, n int, b *budget, size int,
+	decode func([]byte, path) (T, bool, *decodeError),
+) (v T, data, skip bool, derr *decodeError) {
+	switch {
+	case isNull(el):
+		return v, false, true, nil
+	case n == maxListEntries:
+		return v, false, false, tooManyEntries(ep.entry(-1).String())
+	}
+	if derr = b.charge(size, ep); derr != nil {
+		return v, false, false, derr
+	}
+	v, data, derr = decode(el, ep)
+	return v, data, false, derr
+}
+
+// countEntries returns how many elements of the JSON array raw are not null,
+// at most maxListEntries.
+func countEntries(raw []byte) int {
+	n := 0
+	for el := range elements(raw) {
+		if isNull(el) {
+			continue
+		}
+		if n++; n == maxListEntries {
+			break
+		}
+	}
+	return n
+}
+
+// stringEntry decodes a list element that must be a JSON string. An empty
+// string is kept, as an entry without data.
+func stringEntry(el []byte, p path) (string, bool, *decodeError) {
+	if el[0] != '"' {
+		return "", false, wrongType(p.String())
+	}
+	s := decodeKey(el)
+	return s, s != "", nil
+}
+
+// budget is what one decode may still keep, in approximate bytes: list entries
+// at their size, and raw values at their normalized length. A nil *budget is
+// unlimited.
+type budget int
+
+// newBudget returns the budget for decoding a body of n bytes.
+func newBudget(n int) budget { return budget(budgetPerBodyByte*n + budgetSlack) }
+
+// charge spends n bytes, or fails at path p when fewer are left.
+func (b *budget) charge(n int, p path) *decodeError {
+	if b == nil {
+		return nil
+	}
+	if n > int(*b) {
+		return &decodeError{kind: FailureResponseTooLarge, cause: errDecodeBudget, field: p.String()}
+	}
+	*b -= budget(n)
+	return nil
+}
+
+// rawEntry keeps a list element of any JSON type (see keepRaw).
+func (b *budget) rawEntry(el []byte, p path) (json.RawMessage, bool, *decodeError) {
+	return keepRaw(el, p, b)
+}
+
+// keepRaw returns the JSON value raw, at path p, normalized (see
+// normalizeJSON) and charged against b, and whether it holds data. Absent and
+// null are nil.
+func keepRaw(raw []byte, p path, b *budget) (json.RawMessage, bool, *decodeError) {
+	if isNull(raw) {
+		return nil, false, nil
+	}
+	norm, err := normalizeJSON(raw)
+	if err != nil {
+		// A value of a body that passed checkStrict always marshals.
+		return nil, false, wrongType(p.String())
+	}
+	if derr := b.charge(len(norm), p); derr != nil {
+		return nil, false, derr
+	}
+	return norm, hasData(raw), nil
 }
 
 // decodeString decodes a JSON string or null. ok is false for any other type.
@@ -502,7 +826,7 @@ func decodeDiagnostics(msgRaw, errRaw []byte, strict bool) (ProviderDiagnostics,
 		return d, nil
 	}
 	for i, dst := range [...]*[]json.RawMessage{&d.InputErrors, &d.Warnings} {
-		raw := o.fields[i]
+		raw := o.field(i)
 		if isNull(raw) {
 			continue
 		}
@@ -518,19 +842,16 @@ func decodeDiagnostics(msgRaw, errRaw []byte, strict bool) (ProviderDiagnostics,
 }
 
 // diagnosticEntries keeps the first maxDiagnosticEntries usable entries of the
-// JSON array raw, and stops reading there. Each entry is normalized as
-// encoding/json marshals a json.RawMessage (compact, with <, >, & and U+2028
-// and U+2029 escaped), after any lone UTF-16 surrogate escape is replaced by
-// \ufffd, so that a result round-trips through either JSON package unchanged.
-// Null entries, and entries longer than maxDiagnosticEntryBytes once
-// normalized, are dropped. The entries never alias raw.
+// JSON array raw, and stops reading there. Each entry is normalized (see
+// normalizeJSON). Null entries, and entries longer than maxDiagnosticEntryBytes
+// once normalized, are dropped. The entries never alias raw.
 func diagnosticEntries(raw []byte) []json.RawMessage {
 	var out []json.RawMessage
 	for el := range elements(raw) {
 		if isNull(el) {
 			continue
 		}
-		norm, err := json.Marshal(json.RawMessage(replaceLoneSurrogates(el)))
+		norm, err := normalizeJSON(el)
 		if err != nil || len(norm) > maxDiagnosticEntryBytes {
 			continue
 		}
@@ -540,6 +861,15 @@ func diagnosticEntries(raw []byte) []json.RawMessage {
 		}
 	}
 	return out
+}
+
+// normalizeJSON returns a copy of the JSON value raw, normalized as
+// encoding/json marshals a json.RawMessage (compact, with <, >, & and U+2028
+// and U+2029 escaped), after any lone UTF-16 surrogate escape is replaced by
+// �, so that a result round-trips through either JSON package unchanged.
+// It never aliases raw.
+func normalizeJSON(raw []byte) (json.RawMessage, error) {
+	return json.Marshal(json.RawMessage(replaceLoneSurrogates(raw)))
 }
 
 // truncateUTF8 cuts s to at most n bytes without splitting a UTF-8 sequence.

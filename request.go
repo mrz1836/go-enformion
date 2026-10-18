@@ -40,6 +40,9 @@ const (
 	reasonRequired               = "required"
 	reasonInvalidURL             = "invalid_url"
 	reasonNotInitialized         = "not_initialized"
+	reasonUnsupported            = "unsupported"
+	reasonTooMany                = "too_many"
+	reasonNoCriteria             = "no_criteria"
 )
 
 // EnrichContactRequest describes one subject to enrich.
@@ -121,15 +124,14 @@ func (r *EnrichContactRequest) validate() error {
 		{"FirstName", r.FirstName},
 		{"MiddleName", r.MiddleName},
 		{"LastName", r.LastName},
-		{"DOB", r.DOB},
 	}
 	for _, t := range texts {
 		if err := checkText(t.field, t.value); err != nil {
 			return err
 		}
 	}
-	if r.DOB != "" && !validDOB(r.DOB) {
-		return invalidRequest("DOB", reasonInvalidFormat)
+	if err := checkDOB(r.DOB); err != nil {
+		return err
 	}
 	if r.Age < 0 || r.Age > maxAge {
 		return invalidRequest("Age", reasonOutOfRange)
@@ -201,17 +203,38 @@ func (r *EnrichContactRequest) encode() ([]byte, error) {
 // checkText applies the rules every request text field shares. An empty value
 // is valid: it is simply not sent.
 func checkText(field, s string) error {
+	if reason := textReason(s); reason != "" {
+		return invalidRequest(field, reason)
+	}
+	return nil
+}
+
+// textReason returns the reason s breaks the rules every request text field
+// shares, or "" when it keeps them. It never allocates, so a caller can build
+// an indexed field name only once a value fails.
+func textReason(s string) string {
 	switch {
 	case s == "":
-		return nil
+		return ""
 	case len(s) > maxTextBytes:
-		return invalidRequest(field, reasonTooLong)
+		return reasonTooLong
 	case !utf8.ValidString(s):
-		return invalidRequest(field, reasonInvalidUTF8)
+		return reasonInvalidUTF8
 	case strings.ContainsFunc(s, unicode.IsControl):
-		return invalidRequest(field, reasonControlCharacter)
+		return reasonControlCharacter
 	case strings.TrimSpace(s) == "":
-		return invalidRequest(field, reasonBlank)
+		return reasonBlank
+	}
+	return ""
+}
+
+// checkDOB applies the text rules and then the date format to a DOB field.
+func checkDOB(s string) error {
+	if err := checkText("DOB", s); err != nil {
+		return err
+	}
+	if s != "" && !validDOB(s) {
+		return invalidRequest("DOB", reasonInvalidFormat)
 	}
 	return nil
 }

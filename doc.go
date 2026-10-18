@@ -1,12 +1,17 @@
-// Package enformion is a small, standard-library-only Go client for one
-// operation of the EnformionGO developer APIs (Enformion, LLC): standard Contact
-// Enrichment, POST https://devapi.enformion.com/Contact/Enrich with the search
-// type DevAPIContactEnrich.
+// Package enformion is a small, standard-library-only Go client for two
+// operations of the EnformionGO developer APIs (Enformion, LLC):
+//   - standard Contact Enrichment, POST
+//     https://devapi.enformion.com/Contact/Enrich with the search type
+//     DevAPIContactEnrich, which returns the provider's top person match
+//   - Person Search, POST https://devapi.enformion.com/PersonSearch in one of
+//     its four documented search modes, which returns one page of the
+//     provider's candidate persons
 //
-// Create a Client with NewClient and the dashboard's API key name and password,
-// then call EnrichContact with at least two of the four documented search
-// categories: name, phone, email and address. The result holds the provider's
-// top person match, if the response carried one, with typed, optional fields.
+// Create a Client with NewClient and the dashboard's API key name and password.
+// Call EnrichContact with at least two of the four documented search
+// categories (name, phone, email and address), or SearchPersons with a mode
+// and at least one criterion. Results hold the provider's data with typed,
+// optional fields.
 //
 //	client, err := enformion.NewClient(keyName, keyPassword)
 //	if err != nil {
@@ -15,18 +20,24 @@
 //	res, err := client.EnrichContact(ctx, enformion.EnrichContactRequest{
 //		FirstName: "Avery", LastName: "Example", Email: "avery.example@example.com",
 //	})
+//	page, err := client.SearchPersons(ctx, enformion.PersonSearchRequest{
+//		Mode: enformion.PersonSearchModePerson, FirstName: "Avery", LastName: "Example",
+//	})
 //
 // # Calls and billing
 //
 // devapi.enformion.com is the only server the provider documents. Every call to
 // it is live, and the provider's pricing pages say it bills per successful
-// match; there is no documented sandbox. Each EnrichContact call makes at most
-// one HTTP attempt: the SDK never retries, follows a redirect, polls, hedges or
-// makes a follow-on call, and it disables the standard library's own automatic
-// resends. An injected http.Client's transport is trusted and may still retry
-// on its own. After a timeout, a cancellation, a transport failure or an
-// unreadable response, the provider may already have processed and billed the
-// request. The SDK makes no claim about what was or was not billed.
+// match; there is no documented sandbox. Each call makes at most one HTTP
+// attempt: the SDK never retries, follows a redirect, polls, hedges or makes a
+// follow-on call, and it disables the standard library's own automatic
+// resends. A SearchPersons call returns one page: each page, and each change of
+// mode, is a separate call that may be billed, and the SDK never fetches a
+// next page or upgrades a teaser search on its own. An injected http.Client's
+// transport is trusted and may still retry on its own. After a timeout, a
+// cancellation, a transport failure or an unreadable response, the provider
+// may already have processed and billed the request. The SDK makes no claim
+// about what was or was not billed.
 //
 // Requests that fail local validation, and calls whose context is already done,
 // send nothing.
@@ -54,7 +65,13 @@
 // environment, but its request and result types have no redacting formatter:
 // access control, logging, retention, security and permitted use are the
 // caller's responsibility. Serializing or hashing personal data does not
-// anonymize it.
+// anonymize it. Person Search results also describe other people (relatives,
+// associates and neighbors) and keep members the SDK does not decode as raw
+// JSON, which prints in full.
+//
+// A result is the provider's observation, not identity verification: no
+// match, candidate, label, score, indicator or flag establishes anyone's
+// identity, consent or eligibility for any purpose.
 //
 // The provider's terms restrict how its data may be used. In summary, and
 // without any claim of legal suitability: it is not a consumer reporting agency
@@ -74,9 +91,10 @@
 //
 // # Scope and extension
 //
-// Only standard Contact Enrichment is implemented. Contact Enrich Plus, Person
-// Search, Caller ID, ID Verification, batch, pagination and every other
-// EnformionGO product are out of scope. Future operations would be added as
-// new methods on Client, each with its own request and result types, without
-// breaking existing callers.
+// Standard Contact Enrichment and Person Search are implemented. Contact
+// Enrich Plus, Caller ID, ID Verification, the separate Reverse Phone Search
+// API, batch requests, automatic paging and every other EnformionGO product
+// are out of scope. Future operations would be added as new methods on Client,
+// each with its own request and result types, without breaking existing
+// callers.
 package enformion

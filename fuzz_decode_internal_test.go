@@ -1,8 +1,11 @@
 package enformion
 
 import (
+	"bytes"
 	"encoding/json"
+	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -23,6 +26,37 @@ func fdWireNames() map[string]bool {
 		"street", "unit", "city", "state", "zip", "firstReportedDate", "lastReportedDate",
 		"number", "type", "isConnected", "email", "isValidated", "isBusiness",
 		"inputErrors", "warnings",
+
+		// Person Search: the envelope, pagination and counts.
+		"persons", "pagination", "counts", "criteriaType", "smartSearchStatistics",
+		"currentPageNumber", "resultsPerPage", "totalPages", "totalResults",
+		"names", "relatives", "associates", "debtRecords", "datesOfBirth", "datesOfDeath", "deathRecords",
+		"phoneNumbers", "expectedCount", "searchResults", "emailAddresses", "businessRecords", "evictionRecords",
+		"foreclosureRecords", "foreclosureV2Records", "socialSecurityNumbers", "professionalLicenseRecords",
+		"searchResultsOverflow",
+		// Persons and their names.
+		"tahoeId", "fullName", "isPublic", "isPremium", "isOptedOut", "isEnterpriseOptedOut", "hasAdditionalData",
+		"optOutDate", "enterpriseOptOutDate", "sparseFlag", "dob", "dod", "isCurrentPropertyOwner",
+		"akas", "mergedNames", "locations", "relativesSummary", "associatesSummary", "indicators",
+		"prefix", "suffix", "rawNames", "publicFirstSeenDate", "totalFirstSeenDate", "sourceSummary", "isDeceased",
+		// Addresses.
+		"fullAddress", "houseNumber", "streetPreDirection", "streetName", "streetPostDirection", "streetType",
+		"unitType", "county", "zip4", "dpc", "latitude", "longitude", "addressHash", "bldgCode", "utilityCode",
+		"propertyIndicator", "isDeliverable", "isMergedAddress", "unitCount", "addressOrder", "highRiskMarker",
+		"isHighRisk", "sic", "addressType", "addressQualityCodes", "neighbors", "neighborSummaryRecords",
+		// Phones, emails and their engagement data.
+		"phoneNumber", "company", "location", "phoneType", "phoneOrder",
+		"emailAddress", "emailOrdinal", "nonBusiness", "emailEngagementData", "isBounce", "isMatched",
+		"isGoodDomain", "sendTime", "engagementScore", "frequency", "bestDayOfTheWeek", "bestTimeOfTheDay",
+		"naics", "lastCheckDate", "lastTouchDate",
+		// Relatives and associates.
+		"relativeLevel", "relativeType", "spouse", "score", "sharedHouseholdIds", "isPrivate",
+		// Indicators.
+		"hasBankruptcyRecords", "hasBusinessRecords", "hasDivorceRecords", "hasDomainsRecords",
+		"hasEvictionsRecords", "hasFeinRecords", "hasForeclosuresRecords", "hasJudgmentRecords", "hasLienRecords",
+		"hasMarriageRecords", "hasProfessionalLicenseRecords", "hasPropertyRecords",
+		"hasVehicleRegistrationsRecords", "hasWorkplaceRecords", "hasDeaRecords", "hasPropertyV2Records",
+		"hasForeclosuresV2Records", "hasUccRecords", "hasDebtRecords",
 	} {
 		names[n] = true
 	}
@@ -115,6 +149,36 @@ func FuzzDecodeEnvelope(f *testing.F) {
 	})
 }
 
+// fdSearchSeeds returns the Person Search fixtures and tricky bodies its fuzz
+// targets start from.
+func fdSearchSeeds(f *testing.F) [][]byte {
+	f.Helper()
+	seeds := make([][]byte, 0, 32)
+	for _, name := range []string{
+		"provider/person-search-page.json", "provider/person-search-rejected-400.json",
+		"synthetic/person-search-no-persons.json", "synthetic/person-search-is-error.json",
+		"synthetic/person-search-missing-persons.json", "synthetic/person-search-defaults-person.json",
+		"synthetic/person-search-unknown-keys-person.json", "synthetic/person-search-every-field.json",
+		"synthetic/person-search-duplicates.json", "synthetic/person-search-teaser-masked.json",
+	} {
+		seeds = append(seeds, testutil.Fixture(f, name))
+	}
+	for _, s := range []string{
+		``, `{}`, `[]`, `{"isError":false}`, `{"isError":false,"persons":null}`, `{"isError":false,"persons":[null,{}]}`,
+		`{"isError":false,"persons":[{"tahoeId":"G-1","x":{"y":"<"}}]}`,
+		`{"isError":false,"persons":[{"age":1.5}]}`,
+		`{"isError":false,"persons":[{"tahoeId":"G-1","associates":[{"associates":[{"tahoeId":"G-3"}]}]}]}`,
+		`{"isError":false,"persons":[{"addresses":[{"highRiskMarker":{"isHighRisk":"x"}}]}]}`,
+		`{"isError":false,"persons":[],"Persons":[]}`,
+		`{"isError":false,"persons":[{"":{}}]}`,
+		`{"isError":false,"persons":[],"pagination":{"totalPages":0,"cursor":"x"},"counts":{"other":1}}`,
+		testutil.Esc(`{"isError":false,"persons":[{"tahoeId":"G-1","~u0078":"~ud800"}],"criteriaType":"~udc00"}`),
+	} {
+		seeds = append(seeds, []byte(s))
+	}
+	return seeds
+}
+
 // fdStrictSeeds returns documents for the strict scanner: duplicate keys
 // spelled every way, which the oracle must agree on, and malformed input that
 // no helper may panic on.
@@ -189,4 +253,163 @@ func FuzzStrictOracle(f *testing.F) {
 			assert.Len(t, members, len(decoded), "members sees every member once")
 		}
 	})
+}
+
+// fdASCIILower lowercases the ASCII letters of s only, as key matching does.
+func fdASCIILower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+// fdHasData is an independent oracle for hasData over a decoded JSON value: a
+// non-empty string, a non-zero number or true, at any depth.
+func fdHasData(v any) bool {
+	switch x := v.(type) {
+	case string:
+		return x != ""
+	case json.Number:
+		mantissa, _, _ := strings.Cut(strings.ToLower(string(x)), "e")
+		return strings.ContainsAny(mantissa, "123456789")
+	case bool:
+		return x
+	case map[string]any:
+		for _, e := range x {
+			if fdHasData(e) {
+				return true
+			}
+		}
+	case []any:
+		for _, e := range x {
+			if fdHasData(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// FuzzReadObject proves readObject against a json.Unmarshal oracle, for any
+// number of names inside and past the inline storage, and that it never
+// panics on any input.
+func FuzzReadObject(f *testing.F) {
+	for _, s := range fdStrictSeeds() {
+		f.Add([]byte(s), uint8(40))
+	}
+	f.Add([]byte(stManyKeys("k", 40, `,"K8":1`)), uint8(9))
+	f.Add([]byte(stManyKeys("k", 12, `,"x":{"y":[0,"z"]}`)), uint8(12))
+	f.Add([]byte(stManyKeys("K", 9, `,"k40":0`)), uint8(41))
+	f.Fuzz(func(t *testing.T, data []byte, n uint8) {
+		names := dcNames(int(n) % 48)
+		o, dup := readObject(data, names, true)
+		for i := -1; i <= len(names); i++ {
+			_ = o.field(i)
+		}
+		if kind, _ := checkStrict(data); kind != "" {
+			return
+		}
+		dec := json.NewDecoder(strings.NewReader(string(data)))
+		dec.UseNumber()
+		var decoded map[string]any
+		require.NoError(t, dec.Decode(&decoded))
+		var raws map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(data, &raws))
+
+		matches := make([][]string, len(names))
+		ignored := false
+		for key, v := range decoded {
+			i := slices.Index(names, fdASCIILower(key))
+			if i < 0 {
+				ignored = ignored || fdHasData(v)
+				continue
+			}
+			matches[i] = append(matches[i], key)
+		}
+		repeated := slices.ContainsFunc(matches, func(m []string) bool { return len(m) > 1 })
+		if repeated {
+			require.GreaterOrEqual(t, dup, 0, "a name two keys match is reported")
+			assert.Greater(t, len(matches[dup]), 1)
+			return
+		}
+		require.Equal(t, -1, dup)
+		assert.Equal(t, ignored, o.ignoredData)
+		for i, m := range matches {
+			if len(m) == 0 {
+				assert.Nil(t, o.field(i), "name %d", i)
+				continue
+			}
+			var got, want bytes.Buffer
+			require.NoError(t, json.Compact(&got, o.field(i)))
+			require.NoError(t, json.Compact(&want, raws[m[0]]))
+			assert.Equal(t, want.String(), got.String(), "name %d", i)
+		}
+	})
+}
+
+func FuzzDecodePersonSearch(f *testing.F) {
+	for _, seed := range fdSearchSeeds(f) {
+		f.Add(seed, uint16(200))
+		f.Add(seed, uint16(429))
+	}
+	f.Fuzz(func(t *testing.T, body []byte, alt uint16) {
+		for _, status := range []int{200, 100 + int(alt)%900} {
+			for _, diag := range []bool{false, true} {
+				res, err := decodeSearchPersons(&exchange{status: status, body: body}, diag)
+				if err != nil {
+					assert.Nil(t, res)
+					fdCheckFailure(t, err, status, diag)
+					continue
+				}
+				require.Equal(t, 200, status, "only a 200 succeeds")
+				fdCheckSearchResult(t, res)
+			}
+		}
+	})
+}
+
+// fdGrammar matches every CallError text, and fdIndex the list indexes that
+// end a field path segment.
+var (
+	fdGrammar = regexp.MustCompile(`^enformion: [a-z_]+( \(HTTP \d+\))?(: [A-Za-z0-9_.\[\]]+)?$`)
+	fdIndex   = regexp.MustCompile(`(\[\d+\])+$`)
+)
+
+// fdCheckFailure checks a decoding failure: the fixed error grammar, a field
+// path of known wire names, the status and a well-formed request ID, and no
+// diagnostics unless enabled.
+func fdCheckFailure(t *testing.T, err error, status int, diag bool) {
+	t.Helper()
+	ce := asCallError(t, err)
+	require.Regexp(t, fdGrammar, err.Error())
+	assert.True(t, fdValidField(ce.Field, fdWireNames(), fdIndex), "field %q", ce.Field)
+	assert.Equal(t, status, ce.StatusCode)
+	assert.True(t, ce.RequestID == "" || validID(ce.RequestID))
+	if !diag {
+		assert.Equal(t, ProviderDiagnostics{}, ce.Diagnostics())
+	}
+}
+
+// fdCheckSearchResult checks a decoded Person Search page: its bounds, its
+// extras, and that it round-trips through JSON.
+func fdCheckSearchResult(t *testing.T, res *PersonSearchResult) {
+	t.Helper()
+	require.NotNil(t, res)
+	assert.True(t, res.RequestID == "" || validID(res.RequestID))
+	assert.LessOrEqual(t, len(res.Persons), maxListEntries)
+	assert.LessOrEqual(t, len(res.Diagnostics.InputErrors), maxDiagnosticEntries)
+	for _, p := range res.Persons {
+		for _, v := range p.Extra {
+			assert.True(t, json.Valid(v))
+			assert.NotEqual(t, jsonNull, string(v), "null members are not extras")
+		}
+	}
+	data, err := json.Marshal(res)
+	require.NoError(t, err)
+	var back PersonSearchResult
+	require.NoError(t, json.Unmarshal(data, &back))
+	require.True(t, reflect.DeepEqual(*res, back), "a decoded result round-trips through JSON")
 }

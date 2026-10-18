@@ -19,12 +19,14 @@ import (
 const userAgent = "go-enformion"
 
 // call is one provider operation: its path, its galaxy-search-type value, the
-// optional session ID and the encoded body.
+// optional session ID, the encoded body and its response size limit, where 0
+// means the client's.
 type call struct {
 	path       string
 	searchType string
 	sessionID  string
 	body       []byte
+	maxBytes   int64
 }
 
 // exchange is a received HTTP response. For status 200, body is the whole body,
@@ -41,11 +43,16 @@ type exchange struct {
 // errors are *CallError values.
 type sender func(ctx context.Context, c *call) (*exchange, error)
 
-// newSender returns the sender for a validated configuration.
+// newSender returns the sender for a validated configuration. maxBytes is the
+// response size limit of every call that does not set its own.
 func newSender(hc *http.Client, origin, keyName, keyPassword string, timeout time.Duration, maxBytes int64) sender {
 	return func(ctx context.Context, c *call) (*exchange, error) {
 		h := callHeader(keyName, keyPassword, c.searchType, c.sessionID)
-		return roundTrip(ctx, hc, origin+c.path, h, c.body, timeout, maxBytes)
+		limit := maxBytes
+		if c.maxBytes > 0 {
+			limit = c.maxBytes
+		}
+		return roundTrip(ctx, hc, origin+c.path, h, c.body, timeout, limit)
 	}
 }
 

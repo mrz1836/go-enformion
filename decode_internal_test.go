@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -787,4 +788,430 @@ func TestDecodeTruncateUTF8(t *testing.T) {
 	assert.Empty(t, truncateUTF8("é", 1))
 	assert.Empty(t, truncateUTF8("\U0001F600", 3))
 	assert.Empty(t, truncateUTF8("abc", 0))
+}
+
+// dcNames returns the names k0 to k(n-1), which stManyKeys objects use.
+func dcNames(n int) []string {
+	names := make([]string, n)
+	for i := range names {
+		names[i] = "k" + strconv.Itoa(i)
+	}
+	return names
+}
+
+// TestDecodeReadObjectFieldCounts proves that objects of any member count are
+// read, inside and past the inline storage.
+func TestDecodeReadObjectFieldCounts(t *testing.T) {
+	for _, n := range []int{0, 1, 7, 8, 9, 16, 40} {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
+			o, dup := readObject([]byte(stManyKeys("k", n, "")), dcNames(n), true)
+			assert.Equal(t, -1, dup)
+			for i := range n {
+				assert.Equal(t, strconv.Itoa(i), string(o.field(i)), "member %d", i)
+			}
+			assert.Nil(t, o.field(-1))
+			assert.Nil(t, o.field(n), "an index past the names is absent")
+			assert.Nil(t, o.field(n+inlineFields))
+			assert.False(t, o.ignoredData)
+			assert.Len(t, o.more, max(n-inlineFields, 0), "more holds only the members past the inline storage")
+		})
+	}
+	t.Run("absent members are nil", func(t *testing.T) {
+		o, dup := readObject([]byte(`{"k3":1,"k39":2}`), dcNames(40), true)
+		assert.Equal(t, -1, dup)
+		for i := range 40 {
+			switch i {
+			case 3:
+				assert.Equal(t, "1", string(o.field(i)))
+			case 39:
+				assert.Equal(t, "2", string(o.field(i)))
+			default:
+				assert.Nil(t, o.field(i), "member %d", i)
+			}
+		}
+	})
+	t.Run("an index past the storage is ignored", func(t *testing.T) {
+		var o object
+		dup := -1
+		for _, i := range []int{9, 100} {
+			o.keep(i, []byte("x"), make([][]byte, 1), false, &dup)
+			assert.Nil(t, o.field(i))
+		}
+		assert.Equal(t, -1, dup)
+	})
+}
+
+// TestDecodeReadObjectDuplicates proves that a case-folded duplicate is found
+// at every index, and that the first one repeated in body order wins.
+func TestDecodeReadObjectDuplicates(t *testing.T) {
+	for _, i := range []int{0, 7, 8, 39} {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			_, dup := readObject([]byte(stManyKeys("k", 40, `,"K`+strconv.Itoa(i)+`":0`)), dcNames(40), false)
+			assert.Equal(t, i, dup)
+		})
+	}
+	t.Run("first repeated in body order", func(t *testing.T) {
+		_, dup := readObject([]byte(stManyKeys("k", 40, `,"K39":1,"K8":2,"K7":3`)), dcNames(40), false)
+		assert.Equal(t, 39, dup)
+	})
+	t.Run("escaped duplicate past the inline storage", func(t *testing.T) {
+		_, dup := readObject([]byte(stManyKeys("k", 40, testutil.Esc(`,"~u004b20":0`))), dcNames(40), false)
+		assert.Equal(t, 20, dup)
+	})
+}
+
+// TestDecodeReadObjectIgnoredData proves that data under an unrecognized key
+// is seen past the inline storage, and only when tracked.
+func TestDecodeReadObjectIgnoredData(t *testing.T) {
+	tests := []struct {
+		name  string
+		extra string
+		track bool
+		want  bool
+	}{
+		{name: "data, tracked", extra: `,"other":1`, track: true, want: true},
+		{name: "nested data, tracked", extra: `,"other":{"x":[0,"y"]}`, track: true, want: true},
+		{name: "data, untracked", extra: `,"other":1`},
+		{name: "zeros only, tracked", extra: `,"other":{"x":[0,"",false,null]}`, track: true},
+		{name: "a 41st name is not recognized", extra: `,"k40":"x"`, track: true, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o, dup := readObject([]byte(stManyKeys("k", 40, tt.extra)), dcNames(40), tt.track)
+			assert.Equal(t, -1, dup)
+			assert.Equal(t, tt.want, o.ignoredData)
+			assert.Equal(t, "39", string(o.field(39)))
+		})
+	}
+}
+
+// TestDecodeReadObjectNeverPanics reads every strict-check seed, valid or not,
+// against more names than the inline storage holds.
+func TestDecodeReadObjectNeverPanics(t *testing.T) {
+	names := dcNames(40)
+	slots := make([]slot, len(names))
+	for i, n := range names {
+		slots[i] = slot{name: n}
+	}
+	for _, s := range fdStrictSeeds() {
+		assert.NotPanics(t, func() {
+			for _, track := range []bool{false, true} {
+				o, _ := readObject([]byte(s), names, track)
+				for i := -1; i <= len(names); i++ {
+					_ = o.field(i)
+				}
+				_, _ = readSlots([]byte(s), slots, track, nil)
+				_, _ = readSlots([]byte(s), slots, track, make([][]byte, len(slots)-inlineFields))
+			}
+		}, "seed %q", s)
+	}
+}
+
+// TestDecodeReadObjectAllocations proves that objects within the inline
+// storage, every Contact Enrichment object among them, cost no allocation.
+func TestDecodeReadObjectAllocations(t *testing.T) {
+	testutil.SkipUnderRace(t)
+	for _, tt := range []struct {
+		n    int
+		want float64
+	}{{7, 0}, {8, 0}, {9, 1}, {40, 1}} {
+		t.Run(strconv.Itoa(tt.n), func(t *testing.T) {
+			raw, names := []byte(stManyKeys("k", tt.n, "")), dcNames(tt.n)
+			allocs := testing.AllocsPerRun(100, func() { _, _ = readObject(raw, names, true) })
+			assert.InDelta(t, tt.want, allocs, 0)
+		})
+	}
+	t.Run("decodeFlat of a Contact address", func(t *testing.T) {
+		raw := []byte(`{"street":"100 Sample Way","unit":"","city":"Exampleton","state":"OH","zip":"45000",` +
+			`"firstReportedDate":"3/2/2011","lastReportedDate":"8/14/2025"}`)
+		allocs := testing.AllocsPerRun(100, func() { _, _, _ = decodeAddress(raw, at("person.addresses", 0)) })
+		assert.InDelta(t, 6, allocs, 0, "one per non-empty string kept, and none for the slots or the address")
+	})
+}
+
+// TestDecodeFlatManySlots decodes an object of 26 string slots, past the inline
+// storage, and fails at the right member.
+func TestDecodeFlatManySlots(t *testing.T) {
+	const n = 26
+	decode := func(raw string) ([]string, bool, *decodeError) {
+		got := make([]string, n)
+		slots := make([]slot, n)
+		for i := range slots {
+			slots[i] = slot{name: "s" + strconv.Itoa(i), str: &got[i]}
+		}
+		data, derr := decodeFlat([]byte(raw), at("x", -1), slots)
+		return got, data, derr
+	}
+	var b strings.Builder
+	b.WriteByte('{')
+	for i := range n {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(`"s` + strconv.Itoa(i) + `":"v` + strconv.Itoa(i) + `"`)
+	}
+	b.WriteByte('}')
+
+	got, data, derr := decode(b.String())
+	require.Nil(t, derr)
+	assert.True(t, data)
+	for i, v := range got {
+		assert.Equal(t, "v"+strconv.Itoa(i), v)
+	}
+
+	_, _, derr = decode(`{"s3":"a","s25":5}`)
+	require.NotNil(t, derr)
+	assert.Equal(t, "x.s25", derr.field)
+	assert.Equal(t, errWrongType, derr.cause)
+
+	_, _, derr = decode(`{"s20":"a","S20":"b"}`)
+	require.NotNil(t, derr)
+	assert.Equal(t, "x.s20", derr.field)
+	assert.Equal(t, errDuplicateKey, derr.cause)
+
+	_, _, derr = decode(`{"s26":"unrecognized"}`)
+	require.NotNil(t, derr)
+	assert.Equal(t, "x", derr.field)
+	assert.Equal(t, errUnrecognizedData, derr.cause)
+}
+
+// TestDecodeSlotKinds covers each slot destination: what it keeps, what counts
+// as data and what fails.
+func TestDecodeSlotKinds(t *testing.T) {
+	t.Run("num", func(t *testing.T) {
+		tests := []struct {
+			raw   string
+			want  *int
+			data  bool
+			fails bool
+		}{
+			{raw: ``},
+			{raw: jsonNull},
+			{raw: `0`, want: new(0)},
+			{raw: `-0`, want: new(0)},
+			{raw: `7`, want: new(7), data: true},
+			{raw: `-3`, want: new(-3), data: true},
+			{raw: `1.5`, fails: true},
+			{raw: `1e2`, fails: true},
+			{raw: `"7"`, fails: true},
+			{raw: `true`, fails: true},
+			{raw: `99999999999999999999`, fails: true},
+		}
+		for _, tt := range tests {
+			var got *int
+			s := slot{name: "count", num: &got}
+			data, derr := s.decode([]byte(tt.raw), at("x", 2), nil)
+			if tt.fails {
+				require.NotNil(t, derr, tt.raw)
+				assert.Equal(t, "x[2].count", derr.field)
+				assert.Equal(t, FailureMalformedResponse, derr.kind)
+				continue
+			}
+			require.Nil(t, derr, tt.raw)
+			assert.Equal(t, tt.want, got, tt.raw)
+			assert.Equal(t, tt.data, data, tt.raw)
+		}
+	})
+	t.Run("raw", func(t *testing.T) {
+		tests := []struct {
+			raw, want string
+			data      bool
+		}{
+			{raw: ``},
+			{raw: jsonNull},
+			{raw: `0`, want: `0`},
+			{raw: `""`, want: `""`},
+			{raw: `[]`, want: `[]`},
+			{raw: `{"a":[0,false,null]}`, want: `{"a":[0,false,null]}`},
+			{raw: `{ "a" : [ 1 , "<b>&" ] }`, want: testutil.Esc(`{"a":[1,"~u003cb~u003e~u0026"]}`), data: true},
+			{raw: testutil.Esc(`"~ud800"`), want: testutil.Esc(`"~ufffd"`), data: true},
+			{raw: "\"\u2028\"", want: testutil.Esc(`"~u2028"`), data: true},
+		}
+		for _, tt := range tests {
+			var got json.RawMessage
+			s := slot{name: "summary", raw: &got}
+			body := []byte(tt.raw)
+			data, derr := s.decode(body, at("x", -1), nil)
+			require.Nil(t, derr, tt.raw)
+			assert.Equal(t, tt.data, data, tt.raw)
+			if tt.want == "" {
+				assert.Nil(t, got, tt.raw)
+				continue
+			}
+			assert.Equal(t, tt.want, string(got), tt.raw)
+			for i := range body {
+				body[i] = 'Z'
+			}
+			assert.Equal(t, tt.want, string(got), "never aliases the body: %s", tt.raw)
+		}
+	})
+	t.Run("sub paths are relative to the member", func(t *testing.T) {
+		inner := func(raw []byte, p path) (bool, *decodeError) {
+			var zip string
+			return decodeObject(raw, p, nil, true, []slot{{name: "zip", str: &zip}})
+		}
+		list := func(raw []byte, p path) (bool, *decodeError) {
+			_, data, derr := decodeArray(raw, p, nil, func(el []byte, ep path) (struct{}, bool, *decodeError) {
+				var zip string
+				data, derr := decodeObject(el, ep, nil, true, []slot{
+					{name: "zip", str: &zip},
+					{name: "marker", sub: inner},
+				})
+				return struct{}{}, data, derr
+			})
+			return data, derr
+		}
+		tests := []struct {
+			body, field string
+		}{
+			{body: `{"addresses":5}`, field: "persons[3].addresses"},
+			{body: `{"addresses":[null,{"zip":5}]}`, field: "persons[3].addresses[1].zip"},
+			{body: `{"addresses":[{"marker":[]}]}`, field: "persons[3].addresses[0].marker"},
+			{body: `{"addresses":[{"marker":{"zip":true}}]}`, field: "persons[3].addresses[0].marker.zip"},
+			{body: `{"addresses":[{"marker":{"other":"x"}}]}`, field: "persons[3].addresses[0].marker"},
+			{body: `{"addresses":[{},{},{"marker":{"zip":"1","ZIP":"2"}}]}`, field: "persons[3].addresses[2].marker.zip"},
+		}
+		for _, tt := range tests {
+			_, derr := decodeSlots([]byte(tt.body), at("persons", 3), nil, true, []slot{{name: "addresses", sub: list}})
+			require.NotNil(t, derr, tt.body)
+			assert.Equal(t, tt.field, derr.field, tt.body)
+		}
+		data, derr := decodeSlots([]byte(`{"addresses":[{"marker":{"zip":"45000"}}]}`), at("persons", 3), nil, true,
+			[]slot{{name: "addresses", sub: list}})
+		require.Nil(t, derr)
+		assert.True(t, data, "data in a nested object is the member's data")
+	})
+	t.Run("untracked objects ignore other members", func(t *testing.T) {
+		var total *int
+		slots := []slot{{name: "total", num: &total}}
+		data, derr := decodeObject([]byte(`{"total":0,"added":7}`), at("counts", -1), nil, false, slots)
+		require.Nil(t, derr)
+		assert.False(t, data)
+		assert.Equal(t, new(0), total)
+
+		_, derr = decodeObject([]byte(`{"total":0,"added":7}`), at("counts", -1), nil, true, slots)
+		require.NotNil(t, derr)
+		assert.Equal(t, errUnrecognizedData, derr.cause)
+
+		_, derr = decodeObject([]byte(`[]`), at("counts", -1), nil, false, slots)
+		require.NotNil(t, derr)
+		assert.Equal(t, "counts", derr.field)
+		assert.Equal(t, errWrongType, derr.cause)
+
+		data, derr = decodeObject([]byte(jsonNull), at("counts", -1), nil, false, slots)
+		require.Nil(t, derr)
+		assert.False(t, data)
+	})
+}
+
+// TestDecodeArrays covers lists of strings and of raw values, and their check
+// order: null elements, then the entry bound, then the budget, then the type.
+func TestDecodeArrays(t *testing.T) {
+	t.Run("strings", func(t *testing.T) {
+		got, data, derr := decodeArray([]byte(`["a",null,"",`+testutil.Esc(`"~u0062"`)+`]`), at("rawNames", -1), nil, stringEntry)
+		require.Nil(t, derr)
+		assert.True(t, data)
+		assert.Equal(t, []string{"a", "", "b"}, got, "an empty string is an entry; null is not")
+
+		got, data, derr = decodeArray([]byte(`["",""]`), at("rawNames", -1), nil, stringEntry)
+		require.Nil(t, derr)
+		assert.False(t, data)
+		assert.Equal(t, []string{"", ""}, got)
+
+		_, _, derr = decodeArray([]byte(`["a",null,5]`), at("rawNames", -1), nil, stringEntry)
+		require.NotNil(t, derr)
+		assert.Equal(t, "rawNames[2]", derr.field)
+		assert.Equal(t, errWrongType, derr.cause)
+
+		for _, raw := range []string{``, jsonNull, `[]`, `[null]`} {
+			got, data, derr = decodeArray([]byte(raw), at("rawNames", -1), nil, stringEntry)
+			require.Nil(t, derr)
+			assert.False(t, data)
+			assert.Nil(t, got, "an empty list is nil: %q", raw)
+		}
+		_, _, derr = decodeArray([]byte(`"a"`), at("rawNames", -1), nil, stringEntry)
+		require.NotNil(t, derr)
+		assert.Equal(t, "rawNames", derr.field)
+	})
+	t.Run("raw values", func(t *testing.T) {
+		b := newBudget(0)
+		got, data, derr := decodeArray([]byte(`[0, null, {"a" : "<"}, []]`), at("neighbors", -1), &b, b.rawEntry)
+		require.Nil(t, derr)
+		assert.True(t, data)
+		assert.Equal(t, []json.RawMessage{
+			json.RawMessage(`0`), json.RawMessage(testutil.Esc(`{"a":"~u003c"}`)), json.RawMessage(`[]`),
+		}, got)
+	})
+	t.Run("entry bound before the budget", func(t *testing.T) {
+		raw := []byte(`[` + strings.TrimSuffix(strings.Repeat(`"",`, maxListEntries+1), ",") + `]`)
+		b := budget(1 << 30)
+		_, _, derr := decodeArray(raw, at("rawNames", -1), &b, stringEntry)
+		require.NotNil(t, derr)
+		assert.Equal(t, errTooManyEntries, derr.cause)
+		assert.Equal(t, "rawNames", derr.field)
+	})
+}
+
+// TestDecodeBudget proves the budget at its edge: entries are charged their
+// size and raw values their normalized length, and a nil budget is unlimited.
+func TestDecodeBudget(t *testing.T) {
+	assert.Equal(t, budget(budgetPerBodyByte*1000+budgetSlack), newBudget(1000))
+
+	var unlimited *budget
+	assert.Nil(t, unlimited.charge(1<<40, at("x", -1)))
+
+	entry := int(reflect.TypeFor[string]().Size())
+	b := budget(3 * entry)
+	got, _, derr := decodeArray([]byte(`["a","b","c"]`), at("rawNames", -1), &b, stringEntry)
+	require.Nil(t, derr)
+	assert.Len(t, got, 3)
+	assert.Zero(t, b, "exactly spent")
+
+	b = budget(3*entry - 1)
+	_, _, derr = decodeArray([]byte(`["a",null,"b","c"]`), at("rawNames", -1), &b, stringEntry)
+	require.NotNil(t, derr)
+	assert.Equal(t, FailureResponseTooLarge, derr.kind)
+	assert.Equal(t, errDecodeBudget, derr.cause)
+	assert.Equal(t, "rawNames[3]", derr.field, "the entry that ran over")
+
+	norm := len(testutil.Esc(`"~u003c~u003c"`))
+	b = budget(norm)
+	var v json.RawMessage
+	_, derr = (&slot{name: "summary", raw: &v}).decode([]byte(`"<<"`), at("x", 0), &b)
+	require.Nil(t, derr)
+	assert.Zero(t, b, "a raw value costs its normalized length")
+
+	b = budget(norm - 1)
+	_, derr = (&slot{name: "summary", raw: &v}).decode([]byte(`"<<"`), at("x", 0), &b)
+	require.NotNil(t, derr)
+	assert.Equal(t, errDecodeBudget, derr.cause)
+	assert.Equal(t, "x[0].summary", derr.field)
+
+	b = budget(norm - 1)
+	_, derr = decodeObject([]byte(`{"a":{"summary":"<<"}}`), at("x", -1), &b, true, []slot{
+		{name: "a", sub: func(raw []byte, p path) (bool, *decodeError) {
+			return decodeObject(raw, p, &b, true, []slot{{name: "summary", raw: &v}})
+		}},
+	})
+	require.NotNil(t, derr)
+	assert.Equal(t, errDecodeBudget, derr.cause)
+	assert.Equal(t, "x.a.summary", derr.field, "a nested object charges the same budget")
+}
+
+// TestDecodeNormalizeJSON proves the normalization diagnostics and raw values
+// share, and that it never aliases its input.
+func TestDecodeNormalizeJSON(t *testing.T) {
+	in := []byte(testutil.Esc(` { "k" : [ "<a>&", "~ud800", 1.50 ] } `))
+	got, err := normalizeJSON(in)
+	require.NoError(t, err)
+	assert.Equal(t, testutil.Esc(`{"k":["~u003ca~u003e~u0026","~ufffd",1.50]}`), string(got))
+	for i := range in {
+		in[i] = 'Z'
+	}
+	assert.Equal(t, testutil.Esc(`{"k":["~u003ca~u003e~u0026","~ufffd",1.50]}`), string(got))
+
+	same := []byte(`[1]`)
+	got, err = normalizeJSON(same)
+	require.NoError(t, err)
+	assert.NotSame(t, &same[0], &got[0], "a value already normalized is still copied")
 }

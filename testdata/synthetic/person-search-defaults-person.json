@@ -1,0 +1,39 @@
+{
+    "persons": [
+        {
+            "tahoeId": null,
+            "name": {"prefix": null, "firstName": "", "middleName": "", "lastName": null, "suffix": "", "rawNames": [], "sourceSummary": null},
+            "fullName": "",
+            "isPublic": false,
+            "isPremium": false,
+            "isOptedOut": false,
+            "isEnterpriseOptedOut": false,
+            "hasAdditionalData": false,
+            "optOutDate": null,
+            "enterpriseOptOutDate": null,
+            "sparseFlag": 0,
+            "dob": "",
+            "dod": "",
+            "age": 0,
+            "isCurrentPropertyOwner": "",
+            "datesOfBirth": [],
+            "datesOfDeath": [],
+            "deathRecords": {"isDeceased": false, "sourceSummary": null},
+            "akas": [],
+            "mergedNames": [],
+            "locations": [],
+            "addresses": [],
+            "phoneNumbers": [],
+            "emailAddresses": [],
+            "relativesSummary": [],
+            "associatesSummary": [],
+            "indicators": {"hasBankruptcyRecords": 0, "hasDeaRecords": 0},
+            "driversLicenseDetail": null
+        }
+    ],
+    "counts": {"searchResults": 1},
+    "isError": false,
+    "error": {"inputErrors": null, "warnings": null},
+    "requestId": "synthetic-request-0105",
+    "pagination": null
+}

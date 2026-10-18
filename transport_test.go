@@ -280,3 +280,79 @@ func TestTransportProductionOrigin(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "https://devapi.enformion.com/Contact/Enrich", got)
 }
+
+// tpSearchBody is the exact body validSearch encodes to.
+const tpSearchBody = `{"FirstName":"Riley","LastName":"Sample"}`
+
+// TestTransportSearchWireRequest proves, for every mode with and without a
+// session ID, the exact path, header set and body of a Person Search call over
+// TLS: the mode is the search type header and never body content.
+func TestTransportSearchWireRequest(t *testing.T) {
+	for _, mode := range searchModes() {
+		for _, sessionID := range []string{"", "batch-7f3a9c-0003"} {
+			t.Run(string(mode)+"/session="+strconv.FormatBool(sessionID != ""), func(t *testing.T) {
+				c, srv := newServerClient(t, respond(http.StatusOK, []byte(emptySearchPage)))
+				req := validSearch()
+				req.Mode = mode
+				req.SessionID = sessionID
+				_, err := c.SearchPersons(t.Context(), req)
+				require.NoError(t, err)
+
+				reqs := srv.Requests()
+				require.Len(t, reqs, 1)
+				got := reqs[0]
+				assert.Equal(t, http.MethodPost, got.Method)
+				assert.Equal(t, "/PersonSearch", got.URL, "exact path and an empty query")
+				assert.Equal(t, tpSearchBody, string(got.Body), "exact body bytes") //nolint:testifylint // byte-exact, not just equivalent JSON
+
+				want := tpExpectedHeaders(len(tpSearchBody), sessionID)
+				want["Galaxy-Search-Type"] = string(mode)
+				for k, v := range want {
+					assert.Equal(t, []string{v}, got.Header.Values(k), "header %s", k)
+				}
+				assert.Equal(t, tpSortedKeys(want), tpSortedKeys(got.Header, "Accept-Encoding"))
+				for _, banned := range []string{"Authorization", "Cookie", "Idempotency-Key", "X-Idempotency-Key", "Galaxy-Client-Type"} {
+					assert.Empty(t, got.Header.Values(banned), "header %s must never be sent", banned)
+				}
+			})
+		}
+	}
+}
+
+func TestTransportSearchInMemory(t *testing.T) {
+	capt := &tpCapture{body: []byte(emptySearchPage)}
+	c := newTransportClient(t, capt)
+	_, err := c.SearchPersons(t.Context(), validSearch())
+	require.NoError(t, err)
+	require.Len(t, capt.reqs, 1)
+	r := capt.reqs[0]
+	assert.Equal(t, "https://127.0.0.1/PersonSearch", r.URL.String())
+	assert.Nil(t, r.GetBody, "a rewindable body would let the standard library resend the POST")
+	assert.Equal(t, int64(len(tpSearchBody)), r.ContentLength)
+	require.True(t, capt.hasDL[0], "every call carries a deadline")
+}
+
+func TestTransportSearchProductionOrigin(t *testing.T) {
+	var got string
+	rt := testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		got = r.URL.String()
+		return testutil.StaticTransport(http.StatusOK, emptySearchPage)(r)
+	})
+	c := newClient(t, enformion.WithHTTPClient(&http.Client{Transport: rt}))
+	_, err := c.SearchPersons(t.Context(), validSearch())
+	require.NoError(t, err)
+	assert.Equal(t, "https://devapi.enformion.com/PersonSearch", got)
+}
+
+func TestTransportSearchErrorsAreSanitized(t *testing.T) {
+	ct := &testutil.CountingTransport{Next: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		testutil.Drain(r)
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errTPMarker}
+	})}
+	c := newTransportClient(t, ct)
+	res, err := c.SearchPersons(t.Context(), validSearch())
+	assert.Nil(t, res)
+	require.ErrorIs(t, err, enformion.ErrTransport)
+	assert.Equal(t, 1, ct.Attempts(), "exactly one attempt")
+	assertErrorClean(t, err, tpMarker, "127.0.0.1", "/PersonSearch", testKeyName, testKeyPassword)
+}
