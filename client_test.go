@@ -223,19 +223,25 @@ func TestClientNotInitialized(t *testing.T) {
 		client *enformion.Client
 		ctx    context.Context //nolint:containedctx // each case runs with its own context
 		req    enformion.EnrichContactRequest
+		search enformion.PersonSearchRequest
 	}{
-		{name: "zero client", client: &zero, ctx: context.Background(), req: validRequest()},
-		{name: "nil client", client: nilClient, ctx: context.Background(), req: validRequest()},
+		{name: "zero client", client: &zero, ctx: context.Background(), req: validRequest(), search: validSearch()},
+		{name: "nil client", client: nilClient, ctx: context.Background(), req: validRequest(), search: validSearch()},
 		{name: "nil client before an invalid request", client: nilClient, ctx: context.Background()},
-		{name: "zero client before a nil context", client: &zero, ctx: nilCtx, req: validRequest()},
+		{name: "zero client before a nil context", client: &zero, ctx: nilCtx, req: validRequest(), search: validSearch()},
 	}
+	want := enformion.ValidationError{Err: enformion.ErrInvalidConfig, Field: "Client", Reason: "not_initialized"}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			res, err := tt.client.EnrichContact(tt.ctx, tt.req)
 			assert.Nil(t, res)
 			require.ErrorIs(t, err, enformion.ErrInvalidConfig)
-			ve := validationError(t, err)
-			assert.Equal(t, enformion.ValidationError{Err: enformion.ErrInvalidConfig, Field: "Client", Reason: "not_initialized"}, *ve)
+			assert.Equal(t, want, *validationError(t, err))
+
+			page, err := tt.client.SearchPersons(tt.ctx, tt.search)
+			assert.Nil(t, page)
+			require.ErrorIs(t, err, enformion.ErrInvalidConfig)
+			assert.Equal(t, want, *validationError(t, err))
 		})
 	}
 }

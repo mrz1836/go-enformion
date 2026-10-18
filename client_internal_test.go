@@ -174,7 +174,7 @@ func TestClientResponseLimits(t *testing.T) {
 				call  call
 			}{
 				{name: "contact", limit: tt.contact, call: call{path: contactEnrichPath, searchType: contactEnrichSearchType}},
-				{name: "search", limit: tt.search, call: call{path: "/PersonSearch", searchType: "Teaser", maxBytes: c.searchMaxBytes}},
+				{name: "search", limit: tt.search, call: call{path: personSearchPath, searchType: "Teaser", maxBytes: c.searchMaxBytes}},
 			} {
 				size = op.limit + 1
 				_, err = c.send(t.Context(), &op.call)

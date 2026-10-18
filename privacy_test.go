@@ -399,3 +399,237 @@ func TestPrivacyCallErrorDiffsNeverPrintSecrets(t *testing.T) {
 		})
 	}
 }
+
+// Person Search leak markers. Each is distinct, so a failure names what
+// leaked; tokens and the IP are markers that still validate.
+const (
+	pvAKA        = "PvAkaMarker"
+	pvRelative   = "PvRelativeMarker"
+	pvCounty     = "PvCountyMarker"
+	pvTahoeID    = "G-PvTahoeMarker"
+	pvClientIP   = "192.0.2.77"
+	pvInclude    = "PvIncludeMarker"
+	pvFilter     = "PvFilterMarker"
+	pvDOBFormat  = "PvDobFormatMarker"
+	pvMode       = "PvModeMarker"
+	pvRespTahoe  = "PvRespTahoeMarker"
+	pvRespNested = "PvRespNestedMarker"
+	pvExtraKey   = "pvExtraKeyMarker"
+	pvExtraValue = "PvExtraValueMarker"
+)
+
+// pvSearchRequest returns a valid Person Search request whose every field is
+// a marker.
+func pvSearchRequest() enformion.PersonSearchRequest {
+	return enformion.PersonSearchRequest{
+		Mode:      enformion.PersonSearchModePerson,
+		FirstName: pvFirstName, MiddleName: pvMiddleName, LastName: pvLastName,
+		AKAs: []enformion.PersonSearchRequestName{{FirstName: pvAKA}},
+		DOB:  pvDOB, Age: 37,
+		Addresses: []enformion.PersonSearchRequestAddress{
+			{AddressLine1: pvAddressLine1, AddressLine2: pvAddressLine2, County: pvCounty},
+		},
+		Email: pvEmail, Phone: pvPhone, ClientIP: pvClientIP,
+		Relatives:     []enformion.PersonSearchRequestName{{LastName: pvRelative}},
+		TahoeIDs:      []string{pvTahoeID},
+		DOBFormat:     pvDOBFormat,
+		Includes:      []enformion.PersonSearchInclude{pvInclude},
+		FilterOptions: []enformion.PersonSearchFilter{pvFilter},
+		SessionID:     pvSessionID,
+	}
+}
+
+// pvSearchSecrets returns every marker that must never print from a Person
+// Search flow.
+func pvSearchSecrets() []string {
+	return append(pvSecrets(),
+		pvAKA, pvRelative, pvCounty, pvTahoeID, pvClientIP, pvInclude, pvFilter, pvDOBFormat, pvMode,
+		pvRespTahoe, pvRespNested, pvExtraKey, pvExtraValue)
+}
+
+// pvSearch calls SearchPersons through rt with the marker request.
+func pvSearch(ctx context.Context, t *testing.T, rt http.RoundTripper, opts ...enformion.Option) error {
+	t.Helper()
+	_, err := newTransportClient(t, rt, opts...).SearchPersons(ctx, pvSearchRequest())
+	return err
+}
+
+// pvSearchStatic returns a flow body that answers a search with status and
+// body.
+func pvSearchStatic(status int, body string, flowOpts ...enformion.Option) func(*testing.T, ...enformion.Option) error {
+	return func(t *testing.T, opts ...enformion.Option) error {
+		return pvSearch(t.Context(), t, testutil.StaticTransport(status, body), append(flowOpts, opts...)...)
+	}
+}
+
+// pvSearchPerson is a person whose members hold markers at every nested
+// level: names, addresses and their markers, phones, emails and their
+// engagement data, relatives, associates and an undocumented member.
+const pvSearchPerson = `{"tahoeId":"` + pvRespTahoe + `","name":{"firstName":"` + pvRespName + `","rawNames":["` + pvRespNested + `"]},` +
+	`"addresses":[{"fullAddress":"` + pvRespNested + `","highRiskMarker":{"sic":"` + pvRespNested + `"}}],` +
+	`"phoneNumbers":[{"phoneNumber":"` + pvRespNested + `"}],` +
+	`"emailAddresses":[{"emailAddress":"` + pvRespNested + `","emailEngagementData":{"naics":["` + pvRespNested + `"]}}],` +
+	`"relativesSummary":[{"firstName":"` + pvRespNested + `"}],` +
+	`"associates":[{"tahoeId":"` + pvRespNested + `","addresses":[{"zip":"` + pvRespNested + `"}]}],` +
+	`"` + pvExtraKey + `":"` + pvExtraValue + `"}`
+
+// pvSearchFlows returns a real Person Search flow for every failure kind.
+func pvSearchFlows() []pvFlow {
+	tooLarge := `{"isError":false,"persons":[],"message":"` + strings.Repeat(pvTooLarge, 16) + `"}`
+	nestedBad := func(person string) string {
+		return `{"isError":false,"persons":[` + pvSearchPerson + `,` + person + `]}`
+	}
+	emptyAddresses := `{"tahoeId":"` + pvRespTahoe + `","addresses":[` + strings.TrimSuffix(strings.Repeat(`{},`, 1000), ",") + `]}`
+	budget := `{"isError":false,"persons":[` + strings.TrimSuffix(strings.Repeat(emptyAddresses+",", 400), ",") + `]}`
+	return []pvFlow{
+		{name: "unauthorized 401", kind: enformion.FailureUnauthorized, diag: true, call: pvSearchStatic(http.StatusUnauthorized, pvDiagBody)},
+		{name: "rate limited 429", kind: enformion.FailureRateLimited, diag: true, call: pvSearchStatic(http.StatusTooManyRequests, pvDiagBody)},
+		{name: "rejected 400", kind: enformion.FailureRejected, diag: true, call: pvSearchStatic(http.StatusBadRequest, pvDiagBody)},
+		{name: "rejected isError true", kind: enformion.FailureRejected, diag: true, call: pvSearchStatic(http.StatusOK, pvDiagBody)},
+		{name: "upstream 503", kind: enformion.FailureUpstream, diag: true, call: pvSearchStatic(http.StatusServiceUnavailable, pvDiagBody)},
+		{name: "unexpected redirect", kind: enformion.FailureUnexpectedResponse, call: func(t *testing.T, opts ...enformion.Option) error {
+			rt := redirectTransport("https://"+pvLocation+".example.com/next?k="+pvLocation,
+				io.NopCloser(strings.NewReader(`{"message":"`+pvLocation+`"}`)), -1)
+			return pvSearch(t.Context(), t, rt, opts...)
+		}},
+		{name: "unexpected not an object", kind: enformion.FailureUnexpectedResponse, call: pvSearchStatic(http.StatusOK, `["`+pvNotObject+`"]`)},
+		{name: "unexpected persons missing", kind: enformion.FailureUnexpectedResponse, call: pvSearchStatic(http.StatusOK,
+			`{"isError":false,"person":`+pvSearchPerson+`,"message":"`+pvMessage+`"}`)},
+		{name: "unexpected isError missing", kind: enformion.FailureUnexpectedResponse, call: pvSearchStatic(http.StatusOK,
+			`{"persons":[`+pvSearchPerson+`]}`)},
+		{name: "unexpected unknown keys", kind: enformion.FailureUnexpectedResponse, call: pvSearchStatic(http.StatusOK,
+			nestedBad(`{"`+pvExtraKey+`":"`+pvUnknownData+`"}`))},
+		{name: "unexpected nested unknown keys", kind: enformion.FailureUnexpectedResponse, call: pvSearchStatic(http.StatusOK,
+			nestedBad(`{"tahoeId":"`+pvRespTahoe+`","associates":[{"phoneNumbers":[{"`+pvExtraKey+`":"`+pvUnknownData+`"}]}]}`))},
+		{name: "malformed deep wrong type", kind: enformion.FailureMalformedResponse, call: pvSearchStatic(http.StatusOK,
+			nestedBad(`{"associates":[{"emailAddresses":[{"emailEngagementData":{"naics":["`+pvRespName+`",`+pvRespNumber+`]}}]}]}`))},
+		{name: "malformed wrong string type", kind: enformion.FailureMalformedResponse, call: pvSearchStatic(http.StatusOK,
+			`{"isError":false,"persons":[],"counts":{"searchResults":"`+pvRespScore+`"}}`)},
+		{name: "malformed invalid JSON", kind: enformion.FailureMalformedResponse, call: pvSearchStatic(http.StatusOK,
+			`{"isError":false,"persons":[`+pvSearchPerson+`,{"fullName":"`+pvInvalidJSON)},
+		{name: "malformed duplicate key", kind: enformion.FailureMalformedResponse, call: pvSearchStatic(http.StatusOK,
+			`{"isError":false,"persons":[`+pvSearchPerson+`],"persons":[]}`)},
+		{name: "too large declared", kind: enformion.FailureResponseTooLarge, call: pvSearchStatic(http.StatusOK, tooLarge,
+			enformion.WithMaxResponseBytes(64))},
+		{name: "too large over the decode budget", kind: enformion.FailureResponseTooLarge, call: pvSearchStatic(http.StatusOK, budget)},
+		{name: "too many entries", kind: enformion.FailureResponseTooLarge, call: pvSearchStatic(http.StatusOK,
+			`{"isError":false,"persons":[{"tahoeId":"`+pvRespTahoe+`","name":{"rawNames":[`+
+				strings.TrimSuffix(strings.Repeat(`"`+pvRespNested+`",`, 1001), ",")+`]}}]}`)},
+		{name: "transport echo", kind: enformion.FailureTransport, call: func(t *testing.T, opts ...enformion.Option) error {
+			return pvSearch(t.Context(), t, testutil.RoundTripFunc(pvEcho), opts...)
+		}},
+		{name: "timeout", kind: enformion.FailureTimeout, call: func(t *testing.T, opts ...enformion.Option) error {
+			return pvSearch(t.Context(), t, testutil.RoundTripFunc(testutil.BlockUntilDone),
+				append([]enformion.Option{enformion.WithTimeout(time.Millisecond)}, opts...)...)
+		}},
+		{name: "canceled in flight", kind: enformion.FailureCanceled, call: func(t *testing.T, opts ...enformion.Option) error {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			rt := testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				cancel()
+				return testutil.BlockUntilDone(r)
+			})
+			return pvSearch(ctx, t, rt, opts...)
+		}},
+		{name: "deadline exceeded", kind: enformion.FailureDeadlineExceeded, call: func(t *testing.T, opts ...enformion.Option) error {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+			defer cancel()
+			return pvSearch(ctx, t, testutil.RoundTripFunc(testutil.BlockUntilDone), opts...)
+		}},
+	}
+}
+
+func TestPrivacySearchCallErrorsNeverPrintSecrets(t *testing.T) {
+	secrets := pvSearchSecrets()
+	for _, withDiag := range []bool{false, true} {
+		var opts []enformion.Option
+		if withDiag {
+			opts = append(opts, enformion.WithProviderDiagnostics())
+		}
+		for _, f := range pvSearchFlows() {
+			t.Run(fmt.Sprintf("%s diagnostics=%t", f.name, withDiag), func(t *testing.T) {
+				err := f.call(t, opts...)
+				ce := callError(t, err)
+				require.Equal(t, f.kind, ce.Kind)
+				for _, s := range testutil.Shapes(ce) {
+					testutil.AssertNeverPrints(t, s.Value, secrets...)
+				}
+				assertErrorClean(t, err, secrets...)
+			})
+		}
+	}
+}
+
+func TestPrivacySearchDiagnosticsOnlyWithOptIn(t *testing.T) {
+	for _, f := range pvSearchFlows() {
+		if !f.diag {
+			continue
+		}
+		t.Run(f.name, func(t *testing.T) {
+			plain := callError(t, f.call(t))
+			assert.Equal(t, pvRequestID, plain.RequestID)
+			assert.Equal(t, enformion.ProviderDiagnostics{}, plain.Diagnostics(), "diagnostics are off by default")
+			opted := callError(t, f.call(t, enformion.WithProviderDiagnostics()))
+			assert.Equal(t, pvMessage+" "+pvFirstName, opted.Diagnostics().Message, "provider text may echo request values")
+			testutil.AssertRedacted(t, strings.Join(testutil.ReflectStrings(opted), "\n"),
+				[]string{pvMessage, pvInputError, pvWarning}, "reflection walk")
+		})
+	}
+}
+
+func TestPrivacySearchValidationErrorsNeverPrintSecrets(t *testing.T) {
+	secrets := append(pvSearchSecrets(), pvBadValue)
+	search := func(t *testing.T, mutate func(*enformion.PersonSearchRequest)) error {
+		req := pvSearchRequest()
+		mutate(&req)
+		ct := &testutil.CountingTransport{Next: testutil.StaticTransport(http.StatusOK, pvDiagBody)}
+		_, err := newTransportClient(t, ct).SearchPersons(t.Context(), req)
+		assert.Zero(t, ct.Attempts(), "nothing is sent")
+		return err
+	}
+	tests := []struct {
+		name, field string
+		mutate      func(*enformion.PersonSearchRequest)
+	}{
+		{"unsupported mode", "Mode", func(r *enformion.PersonSearchRequest) { r.Mode = pvMode }},
+		{"include token", "Includes[0]", func(r *enformion.PersonSearchRequest) { r.Includes[0] = pvInclude + "!" }},
+		{"filter token", "FilterOptions[0]", func(r *enformion.PersonSearchRequest) { r.FilterOptions[0] = pvFilter + " x" }},
+		{"client IP", "ClientIP", func(r *enformion.PersonSearchRequest) { r.ClientIP = pvBadValue }},
+		{"age range", "AgeRange", func(r *enformion.PersonSearchRequest) { r.AgeRange = pvBadValue }},
+		{"county control character", "Addresses[0].County", func(r *enformion.PersonSearchRequest) { r.Addresses[0].County = pvCounty + "\x00" }},
+		{"AKA invalid UTF-8", "AKAs[0].FirstName", func(r *enformion.PersonSearchRequest) { r.AKAs[0].FirstName = pvAKA + "\xff" }},
+		{"relative blank", "Relatives[0].LastName", func(r *enformion.PersonSearchRequest) { r.Relatives[0].LastName = "  " }},
+		{"Tahoe ID tab", "TahoeIDs[0]", func(r *enformion.PersonSearchRequest) { r.TahoeIDs[0] = pvTahoeID + "\t" }},
+		{"DOB format too long", "DOBFormat", func(r *enformion.PersonSearchRequest) { r.DOBFormat = strings.Repeat(pvDOBFormat, 20) }},
+		{"session ID with a space", "SessionID", func(r *enformion.PersonSearchRequest) { r.SessionID = pvBadValue + " x" }},
+		{"no criteria", "request", func(r *enformion.PersonSearchRequest) {
+			*r = enformion.PersonSearchRequest{Mode: enformion.PersonSearchModeTeaser, DOBFormat: pvDOBFormat, SessionID: pvSessionID}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := search(t, tt.mutate)
+			require.ErrorIs(t, err, enformion.ErrInvalidRequest)
+			ve := validationError(t, err)
+			assert.Equal(t, tt.field, ve.Field)
+			for _, s := range testutil.Shapes(ve) {
+				testutil.AssertNeverPrints(t, s.Value, secrets...)
+			}
+			assertErrorClean(t, err, secrets...)
+		})
+	}
+}
+
+func TestPrivacySearchCallErrorDiffsNeverPrintSecrets(t *testing.T) {
+	secrets := pvSearchSecrets()
+	flows := pvSearchFlows()
+	diag := enformion.WithProviderDiagnostics()
+	for i := 1; i < len(flows); i++ {
+		a, b := flows[i-1], flows[i]
+		t.Run(a.name+" vs "+b.name, func(t *testing.T) {
+			ea := callError(t, a.call(t, diag))
+			eb := callError(t, b.call(t, diag))
+			testutil.AssertDiffRedacted(t, ea, eb, secrets...)
+		})
+	}
+}

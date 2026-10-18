@@ -374,3 +374,199 @@ func Example_httpHandler() {
 	srv := &http.Server{Addr: "127.0.0.1:8080", Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	_ = srv // in an application: srv.ListenAndServe()
 }
+
+// exSearchBody is a synthetic HTTP 200 Person Search page.
+const exSearchBody = `{
+  "persons": [
+    {
+      "tahoeId": "G-1000000000000000101",
+      "name": {"firstName": "Riley", "middleName": "Q", "lastName": "Sample"},
+      "fullName": "Riley Q Sample",
+      "age": 41,
+      "locations": [{"city": "Exampleton", "state": "OH"}],
+      "phoneNumbers": [
+        {"phoneNumber": "(312) 555-0142", "phoneType": "Wireless", "isConnected": true},
+        {"phoneNumber": "(312) 555-0199", "phoneType": "LandLine/Services"}
+      ],
+      "relativesSummary": [{"firstName": "Avery", "lastName": "Example", "relativeType": "Spouse"}],
+      "driversLicenseDetail": []
+    },
+    {
+      "tahoeId": "G-1000000000000000104",
+      "name": {"firstName": "Riley", "lastName": "Sample", "suffix": "Jr"},
+      "fullName": "Riley Sample Jr",
+      "age": 19
+    }
+  ],
+  "pagination": {"currentPageNumber": 1, "resultsPerPage": 10, "totalPages": 1, "totalResults": 2},
+  "counts": {"searchResults": 2},
+  "requestId": "synthetic-request-0201",
+  "isError": false,
+  "error": {"inputErrors": [], "warnings": []}
+}`
+
+// ExampleClient_SearchPersons searches by name and reads the provider's
+// candidates. The call returns one page and is a separate, potentially
+// billable call; the SDK never selects a candidate for you.
+func ExampleClient_SearchPersons() {
+	srv := exServer(http.StatusOK, exSearchBody)
+	defer srv.Close()
+
+	client, err := exLocalClient(srv, enformion.WithTimeout(10*time.Second))
+	if err != nil {
+		fmt.Println("config:", err)
+		return
+	}
+	res, err := client.SearchPersons(context.Background(), enformion.PersonSearchRequest{
+		Mode:           enformion.PersonSearchModePerson,
+		FirstName:      "Riley",
+		LastName:       "Sample",
+		Addresses:      []enformion.PersonSearchRequestAddress{{AddressLine2: "Exampleton, OH"}},
+		ResultsPerPage: 10,
+		SessionID:      "batch-7f3a9c-0001",
+	})
+	if err != nil {
+		fmt.Println("search:", err)
+		return
+	}
+	if len(res.Persons) == 0 {
+		fmt.Println("no candidates in the response") // not proof that no match exists
+		return
+	}
+	for _, p := range res.Persons {
+		age := "not reported"
+		if p.Age != nil {
+			age = strconv.Itoa(*p.Age)
+		}
+		fmt.Println(p.TahoeID, p.FullName, "age:", age)
+		for _, ph := range p.PhoneNumbers {
+			connected := "not reported"
+			if ph.IsConnected != nil {
+				connected = strconv.FormatBool(*ph.IsConnected) // not consent to contact
+			}
+			fmt.Printf("  %s (%s) connected: %s\n", ph.PhoneNumber, ph.PhoneType, connected)
+		}
+		for _, r := range p.RelativesSummary {
+			fmt.Println("  relative:", r.FirstName, r.LastName, r.RelativeType) // the provider's label
+		}
+		for key := range p.Extra {
+			fmt.Println("  undocumented member kept raw:", key)
+		}
+	}
+	if pg := res.Pagination; pg.TotalPages != nil && pg.TotalResults != nil {
+		fmt.Println("pages:", *pg.TotalPages, "results:", *pg.TotalResults)
+	}
+	fmt.Println("request ID:", res.RequestID)
+	// Output:
+	// G-1000000000000000101 Riley Q Sample age: 41
+	//   (312) 555-0142 (Wireless) connected: true
+	//   (312) 555-0199 (LandLine/Services) connected: not reported
+	//   relative: Avery Example Spouse
+	//   undocumented member kept raw: driversLicenseDetail
+	// G-1000000000000000104 Riley Sample Jr age: 19
+	// pages: 1 results: 2
+	// request ID: synthetic-request-0201
+}
+
+// ExampleClient_SearchPersons_reversePhone searches by phone number in the
+// ReversePhonePerson mode, a mode of Person Search rather than the separate
+// Reverse Phone Search API. The call is a separate, potentially billable call.
+func ExampleClient_SearchPersons_reversePhone() {
+	srv := exServer(http.StatusOK, `{"persons": [{"tahoeId": "G-1000000000000000101",
+		"fullName": "Riley Q Sample", "phoneNumbers": [{"phoneNumber": "(312) 555-0142", "phoneOrder": 1}]}],
+		"requestId": "synthetic-request-0202", "isError": false}`)
+	defer srv.Close()
+
+	client, err := exLocalClient(srv)
+	if err != nil {
+		fmt.Println("config:", err)
+		return
+	}
+	res, err := client.SearchPersons(context.Background(), enformion.PersonSearchRequest{
+		Mode:  enformion.PersonSearchModeReversePhonePerson,
+		Phone: "(312) 555-0142",
+	})
+	if err != nil {
+		fmt.Println("search:", err)
+		return
+	}
+	for _, p := range res.Persons {
+		fmt.Println(p.TahoeID, p.FullName, len(p.PhoneNumbers))
+	}
+	// Output:
+	// G-1000000000000000101 Riley Q Sample 1
+}
+
+// ExampleClient_SearchPersons_teaser makes a Teaser search, which the provider
+// documents for "logged out" users, with most data masked or limited. The
+// masking is the provider's: the SDK keeps every value verbatim. A Teaser call
+// is still a separate call that may be billed, and the SDK never upgrades it
+// to a Person search on its own.
+func ExampleClient_SearchPersons_teaser() {
+	srv := exServer(http.StatusOK, `{"persons": [{"tahoeId": "G-1000000000000000102", "fullName": "Avery E******",
+		"locations": [{"city": "Exampleton", "state": "OH"}]}], "isError": false}`)
+	defer srv.Close()
+
+	client, err := exLocalClient(srv)
+	if err != nil {
+		fmt.Println("config:", err)
+		return
+	}
+	res, err := client.SearchPersons(context.Background(), enformion.PersonSearchRequest{
+		Mode:           enformion.PersonSearchModeTeaser,
+		FirstName:      "Avery",
+		LastName:       "Example",
+		Includes:       []enformion.PersonSearchInclude{enformion.PersonSearchIncludeAddresses},
+		ResultsPerPage: 1,
+	})
+	if err != nil {
+		fmt.Println("search:", err)
+		return
+	}
+	p := res.Persons[0]
+	fmt.Println(p.TahoeID, p.FullName, p.Locations[0].City)
+	// Output:
+	// G-1000000000000000102 Avery E****** Exampleton
+}
+
+// ExampleClient_SearchPersons_nextPage fetches a second page explicitly. The
+// SDK never pages on its own: each page is a separate call that may be billed,
+// so the application decides whether the next one is worth it.
+func ExampleClient_SearchPersons_nextPage() {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Page int `json:"Page"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		page := max(req.Page, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"persons": [{"tahoeId": "G-10000000000000003%02d", "fullName": "Jordan Placeholder %d"}],
+			"pagination": {"currentPageNumber": %d, "resultsPerPage": 1, "totalPages": 2, "totalResults": 2},
+			"isError": false}`, page, page, page)
+	}))
+	defer srv.Close()
+
+	client, err := exLocalClient(srv)
+	if err != nil {
+		fmt.Println("config:", err)
+		return
+	}
+	req := enformion.PersonSearchRequest{
+		Mode: enformion.PersonSearchModePerson, FirstName: "Jordan", LastName: "Placeholder", ResultsPerPage: 1,
+	}
+	for page := 1; page <= 2; page++ { // two pages, two billable calls
+		req.Page = page
+		res, err := client.SearchPersons(context.Background(), req)
+		if err != nil {
+			fmt.Println("search:", err)
+			return
+		}
+		fmt.Println("page", *res.Pagination.CurrentPageNumber, "of", *res.Pagination.TotalPages, res.Persons[0].FullName)
+	}
+	// Output:
+	// page 1 of 2 Jordan Placeholder 1
+	// page 2 of 2 Jordan Placeholder 2
+}

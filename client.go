@@ -23,9 +23,10 @@ const (
 	maxCredentialBytes      = 1024
 )
 
-// Client calls the EnformionGO Contact Enrichment API. Create it with
-// NewClient; the zero Client and a nil *Client return ErrInvalidConfig without
-// any I/O. A Client is immutable and safe for concurrent use.
+// Client calls the EnformionGO developer APIs: Contact Enrichment
+// (EnrichContact) and Person Search (SearchPersons). Create it with NewClient;
+// the zero Client and a nil *Client return ErrInvalidConfig without any I/O. A
+// Client is immutable and safe for concurrent use, across operations too.
 //
 // Its fields are unexported and its credentials are held inside a function
 // value, so formatting a Client, or a struct holding one, with any fmt verb or a

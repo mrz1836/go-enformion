@@ -15,12 +15,14 @@ package enformion
 //
 // Once enabled, it reads, only in this test harness:
 //
-//	ENFORMION_LIVE_PROBES=<comma-separated names: nomatch, validation, auth, casing>
+//	ENFORMION_LIVE_PROBES=<comma-separated names: nomatch, validation, auth, casing,
+//	    search-nomatch, search-validation>
 //	ENFORMION_AP_NAME, ENFORMION_AP_PASSWORD
 //
 // and fails before sending anything when no known probe is named, when the
 // chosen probes need more than 4 calls (casing takes 2, the others 1 each, so
-// all four together need 5), or when the credentials are invalid.
+// all six together need 7), or when the credentials are invalid. The search
+// probes call Person Search; the others call Contact Enrichment.
 //
 // and runs with:
 //
@@ -29,7 +31,7 @@ package enformion
 // At most 4 calls are made, never retried, and an HTTP 429 stops every probe.
 // Output is response shape only: the status, response header names, the JSON
 // type tree with safe key names, and the isError flag. No value is ever printed
-// or written. If the nomatch probe unexpectedly returns person data, its
+// or written. If a nomatch probe unexpectedly returns person data, its
 // response is discarded unprinted and the run stops.
 
 import (
@@ -63,6 +65,8 @@ func liveProbes() []liveProbe {
 		{name: "validation", calls: 1, run: liveValidation},
 		{name: "auth", calls: 1, run: liveAuth},
 		{name: "casing", calls: 2, run: liveCasing},
+		{name: "search-nomatch", calls: 1, run: liveSearchNoMatch},
+		{name: "search-validation", calls: 1, run: liveSearchValidation},
 	}
 }
 
@@ -109,13 +113,25 @@ func newLiveClient(t *testing.T, keyName, keyPassword string) *liveClient {
 	return &liveClient{client: c, rec: rec}
 }
 
-// send makes one call with a raw body and returns the exchange, or nil after
-// logging the failure kind.
-func (lc *liveClient) send(t *testing.T, label string, body []byte) *exchange {
+// contactCall returns a Contact Enrichment call with body.
+func contactCall(body []byte) *call {
+	return &call{path: contactEnrichPath, searchType: contactEnrichSearchType, body: body}
+}
+
+// searchCall returns a Person Search call in mode with body, within the
+// Person Search default response limit: the probe's client sets none of its
+// own.
+func searchCall(mode PersonSearchMode, body []byte) *call {
+	return &call{path: personSearchPath, searchType: string(mode), body: body, maxBytes: maxResponseBytesLimit}
+}
+
+// send makes one call and returns the exchange, or nil after logging the
+// failure kind.
+func (lc *liveClient) send(t *testing.T, label string, c *call) *exchange {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), defaultTimeout)
 	defer cancel()
-	ex, err := lc.client.send(ctx, &call{path: contactEnrichPath, searchType: contactEnrichSearchType, body: body})
+	ex, err := lc.client.send(ctx, c)
 	if err != nil {
 		t.Logf("%s: failed: %v", label, err)
 		return nil
@@ -163,7 +179,7 @@ func liveNoMatch(t *testing.T, lc *liveClient) bool {
 	req := liveNoMatchRequest()
 	body, err := req.encode()
 	require.NoError(t, err)
-	ex := lc.send(t, "nomatch", body)
+	ex := lc.send(t, "nomatch", contactCall(body))
 	if ex == nil {
 		return true
 	}
@@ -182,7 +198,7 @@ func liveNoMatch(t *testing.T, lc *liveClient) bool {
 }
 
 func liveValidation(t *testing.T, lc *liveClient) bool {
-	ex := lc.send(t, "validation", []byte(`{}`))
+	ex := lc.send(t, "validation", contactCall([]byte(`{}`)))
 	if ex == nil {
 		return true
 	}
@@ -195,7 +211,7 @@ func liveAuth(t *testing.T, _ *liveClient) bool {
 	req := liveNoMatchRequest()
 	body, err := req.encode()
 	require.NoError(t, err)
-	ex := bogus.send(t, "auth", body)
+	ex := bogus.send(t, "auth", contactCall(body))
 	if ex == nil {
 		return true
 	}
@@ -212,7 +228,7 @@ func liveCasing(t *testing.T, lc *liveClient) bool {
 		{"casing-pascal", `{"Address":{"AddressLine1":"1 Nowhere Probe Rd","AddressLine2":"Springfield, IL 62701"},"Phone":"(312) 555-0100"}`},
 	}
 	for _, b := range bodies {
-		ex := lc.send(t, b.label, []byte(b.body))
+		ex := lc.send(t, b.label, contactCall([]byte(b.body)))
 		if ex == nil {
 			return true
 		}
@@ -227,6 +243,64 @@ func liveCasing(t *testing.T, lc *liveClient) bool {
 		}
 	}
 	return false
+}
+
+// liveSearchNoMatchRequest is a Teaser search for the invented probe subject,
+// one result at most.
+func liveSearchNoMatchRequest() PersonSearchRequest {
+	return PersonSearchRequest{
+		Mode:           PersonSearchModeTeaser,
+		FirstName:      "Zyxprobe",
+		LastName:       "Qwvexample",
+		Phone:          "(312) 555-0100",
+		ResultsPerPage: 1,
+	}
+}
+
+// liveSearchHasPersons reports whether a body's persons member, whatever its
+// key's casing, holds any data at all.
+func liveSearchHasPersons(body []byte) bool {
+	if kind, _ := checkStrict(body); kind != "" {
+		return false
+	}
+	env, _ := readObject(body, searchEnvelopeNames(), false)
+	return hasData(env.field(searchEnvPersons))
+}
+
+func liveSearchNoMatch(t *testing.T, lc *liveClient) bool {
+	req := liveSearchNoMatchRequest()
+	body, err := req.encode()
+	require.NoError(t, err)
+	ex := lc.send(t, "search-nomatch", searchCall(req.Mode, body))
+	if ex == nil {
+		return true
+	}
+	if ex.status == http.StatusTooManyRequests {
+		lc.report(t, "search-nomatch", ex)
+		return true
+	}
+	if liveSearchHasPersons(ex.body) {
+		// Discard the response unprinted: it holds someone's personal data.
+		ex.body = nil
+		t.Logf("search-nomatch: UNEXPECTED person data returned; response discarded unprinted")
+		return true
+	}
+	lc.report(t, "search-nomatch", ex)
+	return false
+}
+
+func liveSearchValidation(t *testing.T, lc *liveClient) bool {
+	ex := lc.send(t, "search-validation", searchCall(PersonSearchModeTeaser, []byte(`{}`)))
+	if ex == nil {
+		return true
+	}
+	if liveSearchHasPersons(ex.body) {
+		ex.body = nil
+		t.Logf("search-validation: UNEXPECTED person data returned; response discarded unprinted")
+		return true
+	}
+	lc.report(t, "search-validation", ex)
+	return ex.status == http.StatusTooManyRequests
 }
 
 // liveRecorder passes requests to next and keeps the header names of the last

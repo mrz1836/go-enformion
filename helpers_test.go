@@ -2,6 +2,7 @@ package enformion_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -144,4 +145,43 @@ func kindSentinels() map[enformion.FailureKind]error {
 		enformion.FailureCanceled:           context.Canceled,
 		enformion.FailureDeadlineExceeded:   context.DeadlineExceeded,
 	}
+}
+
+// emptySearchPage is the smallest successful Person Search page: no persons.
+const emptySearchPage = `{"isError":false,"persons":[]}`
+
+// searchLast is the synthetic last name the Person Search tests repeat; the
+// first name is feFirst.
+const searchLast = "Sample"
+
+// validSearch returns a Teaser request with one criterion, a name, built from
+// synthetic values.
+func validSearch() enformion.PersonSearchRequest {
+	return enformion.PersonSearchRequest{
+		Mode:      enformion.PersonSearchModeTeaser,
+		FirstName: feFirst,
+		LastName:  searchLast,
+	}
+}
+
+// searchModes returns the four documented Person Search modes.
+func searchModes() []enformion.PersonSearchMode {
+	return []enformion.PersonSearchMode{
+		enformion.PersonSearchModePerson, enformion.PersonSearchModeTeaser,
+		enformion.PersonSearchModeReversePhonePerson, enformion.PersonSearchModeReversePhonePersonTeaser,
+	}
+}
+
+// searchPage returns a Person Search page of n copies of the provider-shaped
+// fixture's first person, the fullest one, in the fixture's envelope.
+func searchPage(tb testing.TB, n int) string {
+	tb.Helper()
+	var env struct {
+		Persons []json.RawMessage `json:"persons"`
+	}
+	require.NoError(tb, json.Unmarshal(testutil.Fixture(tb, "provider/person-search-page.json"), &env))
+	require.NotEmpty(tb, env.Persons)
+	persons := strings.TrimSuffix(strings.Repeat(string(env.Persons[0])+",", n), ",")
+	return `{"persons":[` + persons + `],"isError":false,"error":{"inputErrors":[],"warnings":[]},` +
+		`"requestId":"synthetic-request-0110"}`
 }
