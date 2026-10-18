@@ -61,6 +61,10 @@ const (
 	// every Contact Enrichment object fits.
 	inlineFields = 8
 
+	// maxSlots is the widest slot table that decodes without allocating: a
+	// Person Search address has 35 members.
+	maxSlots = 40
+
 	// maxPathDepth is how many segments a JSON path holds, such as the five of
 	// "persons[0].associates[1].emailAddresses[0].emailEngagementData.naics[2]".
 	maxPathDepth = 6
@@ -186,60 +190,57 @@ func (o *object) field(i int) []byte {
 	return nil
 }
 
-// setField stores member i. An index out of range is ignored.
-func (o *object) setField(i int, v []byte) {
-	switch {
-	case i >= 0 && i < inlineFields:
-		o.inline[i] = v
-	case i >= inlineFields && i-inlineFields < len(o.more):
-		o.more[i-inlineFields] = v
-	}
-}
-
-// reserve makes room for n members.
-func (o *object) reserve(n int) {
-	if n > inlineFields {
-		o.more = make([][]byte, n-inlineFields)
-	}
-}
-
-// put records the member value whose key matched the name at index i, or no
-// name when i is -1, keeping the first repeated index in dup.
-func (o *object) put(i int, value []byte, track bool, dup *int) {
+// keep records the member value whose key matched index i, or no name when i
+// is -1: inline or, past the inline storage, in more; unmatched, into
+// ignoredData when track is set. A member matched twice records its index in
+// dup, once. An index past more is ignored.
+func (o *object) keep(i int, value []byte, more [][]byte, track bool, dup *int) {
+	var dst *[]byte
 	switch {
 	case i < 0:
 		if track && !o.ignoredData {
 			o.ignoredData = hasData(value)
 		}
-	case o.field(i) != nil:
+		return
+	case i < inlineFields:
+		dst = &o.inline[i]
+	case i-inlineFields < len(more):
+		dst = &more[i-inlineFields]
+	default:
+		return
+	}
+	if *dst != nil {
 		if *dup < 0 {
 			*dup = i
 		}
-	default:
-		o.setField(i, value)
+		return
 	}
+	*dst = value
 }
 
 // readObject reads the JSON object raw against names, matching keys without
 // regard to ASCII case. dup is the index of a name two members match, or -1.
 // ignoredData is computed only when track is set.
 func readObject(raw []byte, names []string, track bool) (o object, dup int) {
-	o.reserve(len(names))
+	if n := len(names) - inlineFields; n > 0 {
+		o.more = make([][]byte, n)
+	}
 	dup = -1
 	for key, value := range members(raw) {
-		o.put(foldIndex(keyBytes(key), names), value, track, &dup)
+		o.keep(foldIndex(keyBytes(key), names), value, o.more, track, &dup)
 	}
 	return o, dup
 }
 
-// readSlots is readObject against the names of slots. Matching the slots in
-// place, rather than copying their names out, keeps every slot's destination
-// on its caller's stack.
-func readSlots(raw []byte, slots []slot, track bool) (o object, dup int) {
-	o.reserve(len(slots))
+// readSlots is readObject against the names of slots, except that members
+// past the inline storage are kept in more, which needs len(slots) -
+// inlineFields entries, and o.more stays nil. Matching the slots in place,
+// rather than copying their names out, and never holding more in o, keep every
+// slot's destination, and more itself, on the caller's stack.
+func readSlots(raw []byte, slots []slot, track bool, more [][]byte) (o object, dup int) {
 	dup = -1
 	for key, value := range members(raw) {
-		o.put(slotIndex(keyBytes(key), slots), value, track, &dup)
+		o.keep(slotIndex(keyBytes(key), slots), value, more, track, &dup)
 	}
 	return o, dup
 }
@@ -489,13 +490,35 @@ func decodeFlat(raw []byte, p path, slots []slot) (bool, *decodeError) {
 // holds data. When track is set, an object whose only data is under other keys
 // fails as an unexpected response; otherwise other members are ignored.
 func decodeSlots(raw []byte, p path, b *budget, track bool, slots []slot) (bool, *decodeError) {
-	o, dup := readSlots(raw, slots, track)
+	switch n := len(slots) - inlineFields; {
+	case n <= 0:
+		return decodeSlotsIn(raw, p, b, track, slots, nil)
+	case n <= maxSlots-inlineFields:
+		// A wider object keeps its other members on this stack rather than
+		// the heap; only wide objects pay for zeroing it.
+		var more [maxSlots - inlineFields][]byte
+		return decodeSlotsIn(raw, p, b, track, slots, more[:n])
+	default:
+		return decodeSlotsIn(raw, p, b, track, slots, make([][]byte, n))
+	}
+}
+
+// decodeSlotsIn is decodeSlots with more, the storage for members past the
+// inline storage (see readSlots).
+func decodeSlotsIn(raw []byte, p path, b *budget, track bool, slots []slot, more [][]byte) (bool, *decodeError) {
+	o, dup := readSlots(raw, slots, track, more)
 	if dup >= 0 {
 		return false, duplicated(p.member(slots[dup].name))
 	}
 	data := false
 	for i := range slots {
-		d, derr := slots[i].decode(o.field(i), p, b)
+		var member []byte
+		if i < inlineFields {
+			member = o.inline[i]
+		} else if k := i - inlineFields; k < len(more) {
+			member = more[k]
+		}
+		d, derr := slots[i].decode(member, p, b)
 		if derr != nil {
 			return false, derr
 		}
@@ -596,35 +619,90 @@ func decodeArray[T any](raw []byte, p path, b *budget, decode func([]byte, path)
 	if raw[0] != '[' {
 		return nil, false, wrongType(p.String())
 	}
+	if b != nil {
+		return decodeBudgeted(raw, p, b, decode)
+	}
+	// Grown from nil, so that the compiler may grow a short list on the stack
+	// and allocate it once, at its size, when it is returned.
 	var (
 		out  []T
 		data bool
-		size int
 		i    = -1
 	)
-	if b != nil {
-		size = int(reflect.TypeFor[T]().Size())
-	}
 	for el := range elements(raw) {
 		i++
-		if isNull(el) {
-			continue
-		}
-		if len(out) == maxListEntries {
-			return nil, false, tooManyEntries(p.String())
-		}
-		ep := p.entry(i)
-		if derr := b.charge(size, ep); derr != nil {
-			return nil, false, derr
-		}
-		v, d, derr := decode(el, ep)
+		v, d, skip, derr := arrayEntry(el, p.entry(i), len(out), nil, 0, decode)
 		if derr != nil {
 			return nil, false, derr
 		}
-		out = append(out, v)
-		data = data || d
+		if !skip {
+			out = append(out, v)
+			data = data || d
+		}
 	}
 	return out, data, nil
+}
+
+// decodeBudgeted is decodeArray for a non-empty array with a budget. The list
+// is allocated once, at its size, so that growing it leaves no garbage beyond
+// what the budget counts.
+func decodeBudgeted[T any](raw []byte, p path, b *budget, decode func([]byte, path) (T, bool, *decodeError)) ([]T, bool, *decodeError) {
+	n := countEntries(raw)
+	if n == 0 {
+		return nil, false, nil
+	}
+	var (
+		out  = make([]T, 0, n)
+		size = int(reflect.TypeFor[T]().Size())
+		data bool
+		i    = -1
+	)
+	for el := range elements(raw) {
+		i++
+		v, d, skip, derr := arrayEntry(el, p.entry(i), len(out), b, size, decode)
+		if derr != nil {
+			return nil, false, derr
+		}
+		if !skip {
+			out = append(out, v)
+			data = data || d
+		}
+	}
+	return out, data, nil
+}
+
+// arrayEntry decodes the array element el at path ep, after n entries,
+// charging size against b. skip reports a JSON null element, which is not an
+// entry. More than maxListEntries entries fail at the list's path.
+func arrayEntry[T any](el []byte, ep path, n int, b *budget, size int,
+	decode func([]byte, path) (T, bool, *decodeError),
+) (v T, data, skip bool, derr *decodeError) {
+	switch {
+	case isNull(el):
+		return v, false, true, nil
+	case n == maxListEntries:
+		return v, false, false, tooManyEntries(ep.entry(-1).String())
+	}
+	if derr = b.charge(size, ep); derr != nil {
+		return v, false, false, derr
+	}
+	v, data, derr = decode(el, ep)
+	return v, data, false, derr
+}
+
+// countEntries returns how many elements of the JSON array raw are not null,
+// at most maxListEntries.
+func countEntries(raw []byte) int {
+	n := 0
+	for el := range elements(raw) {
+		if isNull(el) {
+			continue
+		}
+		if n++; n == maxListEntries {
+			break
+		}
+	}
+	return n
 }
 
 // stringEntry decodes a list element that must be a JSON string. An empty

@@ -1,0 +1,12 @@
+{
+    "persons": [
+        {
+            "personIdentifier": "G-1000000000000000106",
+            "personName": {"first": "Riley", "last": "Sample"},
+            "phones": [{"number": "(312) 555-0142"}]
+        }
+    ],
+    "isError": false,
+    "error": {"inputErrors": [], "warnings": []},
+    "requestId": "synthetic-request-0106"
+}

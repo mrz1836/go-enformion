@@ -1,0 +1,18 @@
+{
+    "persons": [
+        {
+            "tahoeId": "G-1000000000000000105",
+            "fullName": "Riley Sample"
+        }
+    ],
+    "message": "Synthetic message: the search was refused.",
+    "requestId": "synthetic-request-0103",
+    "isError": true,
+    "error": {
+        "inputErrors": [
+            {"field": "Addresses", "message": "Synthetic input error."},
+            "Synthetic input error as a string."
+        ],
+        "warnings": [null, 7]
+    }
+}

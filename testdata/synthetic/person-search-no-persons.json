@@ -1,0 +1,35 @@
+{
+    "persons": [],
+    "counts": {
+        "names": 0,
+        "addresses": 0,
+        "relatives": 0,
+        "associates": 0,
+        "debtRecords": 0,
+        "datesOfBirth": 0,
+        "datesOfDeath": 0,
+        "deathRecords": 0,
+        "phoneNumbers": 0,
+        "expectedCount": 0,
+        "searchResults": 0,
+        "emailAddresses": 0,
+        "businessRecords": 0,
+        "evictionRecords": 0,
+        "foreclosureRecords": 0,
+        "foreclosureV2Records": 0,
+        "socialSecurityNumbers": 0,
+        "professionalLicenseRecords": 0,
+        "searchResultsOverflow": false
+    },
+    "isError": false,
+    "error": {
+        "inputErrors": [],
+        "warnings": [
+            "Synthetic warning: no persons were returned."
+        ]
+    },
+    "requestId": "synthetic-request-0102",
+    "pagination": {},
+    "criteriaType": {},
+    "smartSearchStatistics": {}
+}

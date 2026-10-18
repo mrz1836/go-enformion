@@ -1,0 +1,364 @@
+{
+    "persons": [
+        {
+            "tahoeId": "G-1000000000000000101",
+            "name": {
+                "prefix": "",
+                "firstName": "Riley",
+                "middleName": "Q",
+                "lastName": "Sample",
+                "suffix": "",
+                "rawNames": [
+                    "RILEY Q SAMPLE"
+                ],
+                "publicFirstSeenDate": "7/26/2016",
+                "totalFirstSeenDate": "7/26/2016"
+            },
+            "fullName": "Riley Q Sample",
+            "isPublic": true,
+            "isPremium": false,
+            "isOptedOut": false,
+            "isEnterpriseOptedOut": false,
+            "hasAdditionalData": true,
+            "optOutDate": "",
+            "enterpriseOptOutDate": "",
+            "sparseFlag": 0,
+            "dob": "6/1985",
+            "dod": "",
+            "age": 41,
+            "isCurrentPropertyOwner": "Not Available",
+            "datesOfBirth": [
+                {
+                    "age": 41
+                }
+            ],
+            "datesOfDeath": [],
+            "deathRecords": {
+                "isDeceased": false
+            },
+            "akas": [
+                {
+                    "prefix": "",
+                    "firstName": "Rye",
+                    "middleName": "",
+                    "lastName": "Sample",
+                    "suffix": "",
+                    "rawNames": [],
+                    "publicFirstSeenDate": null,
+                    "totalFirstSeenDate": "3/2/2011"
+                }
+            ],
+            "mergedNames": [
+                {
+                    "prefix": "",
+                    "firstName": "Riley",
+                    "middleName": "Q",
+                    "lastName": "Sample",
+                    "suffix": "",
+                    "rawNames": [],
+                    "publicFirstSeenDate": "7/26/2016",
+                    "totalFirstSeenDate": "7/26/2016"
+                }
+            ],
+            "locations": [
+                {
+                    "city": "Exampleton",
+                    "state": "OH"
+                }
+            ],
+            "addresses": [
+                {
+                    "fullAddress": "100 Sample Way; Exampleton, OH 45000-0001",
+                    "houseNumber": "100",
+                    "streetPreDirection": "",
+                    "streetName": "Sample",
+                    "streetPostDirection": "",
+                    "streetType": "Way",
+                    "unit": "",
+                    "unitType": null,
+                    "city": "Exampleton",
+                    "state": "OH",
+                    "county": "Sample",
+                    "zip": "45000",
+                    "zip4": "0001",
+                    "dpc": "01",
+                    "latitude": "39.000100",
+                    "longitude": "-84.000200",
+                    "addressHash": "-1000000000000000001",
+                    "bldgCode": "",
+                    "utilityCode": "",
+                    "propertyIndicator": "",
+                    "unitCount": 1,
+                    "addressOrder": 1,
+                    "isPublic": true,
+                    "isDeliverable": true,
+                    "isMergedAddress": false,
+                    "phoneNumbers": [
+                        "(312) 555-0142"
+                    ],
+                    "highRiskMarker": {
+                        "isHighRisk": false,
+                        "sic": "",
+                        "addressType": ""
+                    },
+                    "addressQualityCodes": [
+                        "AA"
+                    ],
+                    "neighbors": [],
+                    "neighborSummaryRecords": [],
+                    "firstReportedDate": "3/2/2011",
+                    "lastReportedDate": "8/14/2025",
+                    "publicFirstSeenDate": "3/2/2011",
+                    "totalFirstSeenDate": "3/2/2011"
+                }
+            ],
+            "phoneNumbers": [
+                {
+                    "phoneNumber": "(312) 555-0142",
+                    "phoneType": "Wireless",
+                    "company": "Example Wireless",
+                    "location": "",
+                    "latitude": "39.000100",
+                    "longitude": "-84.000200",
+                    "phoneOrder": 1,
+                    "isConnected": true,
+                    "isPublic": false,
+                    "firstReportedDate": "5/5/2015",
+                    "lastReportedDate": "9/30/2025",
+                    "publicFirstSeenDate": null,
+                    "totalFirstSeenDate": "5/5/2015"
+                },
+                {
+                    "phoneNumber": "(312) 555-0199",
+                    "phoneType": "LandLine/Services",
+                    "company": "Example Telephone",
+                    "location": "",
+                    "latitude": "",
+                    "longitude": "",
+                    "phoneOrder": 2,
+                    "isConnected": false,
+                    "isPublic": true,
+                    "firstReportedDate": "7/1/2006",
+                    "lastReportedDate": "12/31/2012",
+                    "publicFirstSeenDate": "7/1/2006",
+                    "totalFirstSeenDate": "7/1/2006"
+                }
+            ],
+            "emailAddresses": [
+                {
+                    "emailAddress": "riley.sample@example.com",
+                    "emailOrdinal": 1,
+                    "isPremium": false,
+                    "nonBusiness": 1,
+                    "emailEngagementData": {
+                        "isBounce": false,
+                        "isMatched": true,
+                        "isGoodDomain": true,
+                        "sendTime": 9,
+                        "engagementScore": 3,
+                        "frequency": "Weekly",
+                        "bestDayOfTheWeek": "Tuesday",
+                        "bestTimeOfTheDay": "Morning",
+                        "naics": null,
+                        "lastCheckDate": "2025-08-14T00:00:00Z",
+                        "lastTouchDate": null
+                    }
+                }
+            ],
+            "relativesSummary": [
+                {
+                    "tahoeId": "G-1000000000000000102",
+                    "prefix": "",
+                    "firstName": "Avery",
+                    "middleName": "",
+                    "lastName": "Example",
+                    "suffix": "",
+                    "dob": "9/XX/1987",
+                    "relativeType": "Spouse",
+                    "relativeLevel": "ab",
+                    "spouse": 1,
+                    "sharedHouseholdIds": [
+                        "H-0000000000000001"
+                    ],
+                    "score": 850,
+                    "isPrivate": false,
+                    "isOptedOut": false,
+                    "isDeceased": false,
+                    "city": "Exampleton",
+                    "state": "OH"
+                }
+            ],
+            "associatesSummary": [
+                {
+                    "tahoeId": "G-1000000000000000103",
+                    "prefix": "",
+                    "firstName": "Jordan",
+                    "middleName": "",
+                    "lastName": "Placeholder",
+                    "suffix": "",
+                    "dob": "",
+                    "score": 450
+                }
+            ],
+            "indicators": {
+                "hasPropertyRecords": 0,
+                "hasPropertyV2Records": 0,
+                "hasBusinessRecords": 1,
+                "hasFeinRecords": 0,
+                "hasVehicleRegistrationsRecords": 2,
+                "hasWorkplaceRecords": 0,
+                "hasUccRecords": 0,
+                "hasLienRecords": 0,
+                "hasJudgmentRecords": 0,
+                "hasBankruptcyRecords": 0,
+                "hasForeclosuresRecords": 0,
+                "hasForeclosuresV2Records": 0,
+                "hasEvictionsRecords": 0,
+                "hasDebtRecords": 0,
+                "hasMarriageRecords": 1,
+                "hasDivorceRecords": 0,
+                "hasProfessionalLicenseRecords": 0,
+                "hasDomainsRecords": 0,
+                "hasDeaRecords": 0
+            },
+            "driversLicenseDetail": []
+        },
+        {
+            "tahoeId": "G-1000000000000000104",
+            "name": {
+                "prefix": "",
+                "firstName": "Riley",
+                "middleName": "",
+                "lastName": "Sample",
+                "suffix": "Jr",
+                "rawNames": [],
+                "publicFirstSeenDate": null,
+                "totalFirstSeenDate": "1/9/2004"
+            },
+            "fullName": "Riley Sample Jr",
+            "isPublic": true,
+            "isPremium": false,
+            "isOptedOut": false,
+            "isEnterpriseOptedOut": false,
+            "hasAdditionalData": false,
+            "optOutDate": "",
+            "enterpriseOptOutDate": "",
+            "sparseFlag": 1,
+            "dob": "",
+            "dod": "",
+            "age": 0,
+            "isCurrentPropertyOwner": "Not Available",
+            "datesOfBirth": [],
+            "datesOfDeath": [],
+            "deathRecords": {
+                "isDeceased": false
+            },
+            "akas": [],
+            "mergedNames": [],
+            "locations": [
+                {
+                    "city": "Testville",
+                    "state": "OH"
+                }
+            ],
+            "addresses": [
+                {
+                    "fullAddress": "200 Placeholder Rd Apt 4B; Testville, OH 45001",
+                    "houseNumber": "200",
+                    "streetPreDirection": "",
+                    "streetName": "Placeholder",
+                    "streetPostDirection": "",
+                    "streetType": "Rd",
+                    "unit": "4B",
+                    "unitType": "Apt",
+                    "city": "Testville",
+                    "state": "OH",
+                    "county": "Sample",
+                    "zip": "45001",
+                    "zip4": "",
+                    "dpc": "",
+                    "latitude": "",
+                    "longitude": "",
+                    "addressHash": "1000000000000000002",
+                    "bldgCode": "",
+                    "utilityCode": "",
+                    "propertyIndicator": "",
+                    "unitCount": 12,
+                    "addressOrder": 1,
+                    "isPublic": true,
+                    "isDeliverable": false,
+                    "isMergedAddress": false,
+                    "phoneNumbers": [],
+                    "highRiskMarker": {
+                        "isHighRisk": false,
+                        "sic": "",
+                        "addressType": ""
+                    },
+                    "addressQualityCodes": [],
+                    "neighbors": [],
+                    "neighborSummaryRecords": [],
+                    "firstReportedDate": "1/9/2004",
+                    "lastReportedDate": "2/27/2011",
+                    "publicFirstSeenDate": null,
+                    "totalFirstSeenDate": "1/9/2004"
+                }
+            ],
+            "phoneNumbers": [],
+            "emailAddresses": [],
+            "relativesSummary": [],
+            "associatesSummary": [],
+            "indicators": {
+                "hasPropertyRecords": 0,
+                "hasPropertyV2Records": 0,
+                "hasBusinessRecords": 0,
+                "hasFeinRecords": 0,
+                "hasVehicleRegistrationsRecords": 0,
+                "hasWorkplaceRecords": 0,
+                "hasUccRecords": 0,
+                "hasLienRecords": 0,
+                "hasJudgmentRecords": 0,
+                "hasBankruptcyRecords": 0,
+                "hasForeclosuresRecords": 0,
+                "hasForeclosuresV2Records": 0,
+                "hasEvictionsRecords": 0,
+                "hasDebtRecords": 0,
+                "hasMarriageRecords": 0,
+                "hasDivorceRecords": 0,
+                "hasProfessionalLicenseRecords": 0,
+                "hasDomainsRecords": 0,
+                "hasDeaRecords": 0
+            },
+            "driversLicenseDetail": []
+        }
+    ],
+    "counts": {
+        "names": 3,
+        "addresses": 2,
+        "relatives": 1,
+        "associates": 1,
+        "debtRecords": 0,
+        "datesOfBirth": 1,
+        "datesOfDeath": 0,
+        "deathRecords": 0,
+        "phoneNumbers": 2,
+        "expectedCount": 2,
+        "searchResults": 2,
+        "emailAddresses": 1,
+        "businessRecords": 0,
+        "evictionRecords": 0,
+        "foreclosureRecords": 0,
+        "foreclosureV2Records": 0,
+        "socialSecurityNumbers": 0,
+        "professionalLicenseRecords": 0,
+        "searchResultsOverflow": false
+    },
+    "isError": false,
+    "error": {
+        "inputErrors": [],
+        "warnings": []
+    },
+    "requestId": "synthetic-request-0101",
+    "pagination": {},
+    "criteriaType": {},
+    "smartSearchStatistics": {}
+}

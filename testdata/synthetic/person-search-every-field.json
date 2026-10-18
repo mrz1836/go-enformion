@@ -1,0 +1,250 @@
+{
+    "persons": [
+        {
+            "tahoeId": "G-1000000000000000110",
+            "name": {
+                "prefix": "Dr",
+                "firstName": "Riley",
+                "middleName": "Q",
+                "lastName": "Sample",
+                "suffix": "II",
+                "rawNames": ["RILEY Q SAMPLE", "R Q SAMPLE"],
+                "publicFirstSeenDate": "7/26/2016",
+                "totalFirstSeenDate": "7/25/2016",
+                "sourceSummary": {"sources": ["synthetic-source-a"]}
+            },
+            "fullName": "Dr Riley Q Sample II",
+            "isPublic": true,
+            "isPremium": true,
+            "isOptedOut": true,
+            "isEnterpriseOptedOut": true,
+            "hasAdditionalData": true,
+            "optOutDate": "1/2/2024 3:04:05 PM",
+            "enterpriseOptOutDate": "2/3/2024 4:05:06 AM",
+            "sparseFlag": 2,
+            "dob": "6/1985",
+            "dod": "9/30/2025",
+            "age": 40,
+            "isCurrentPropertyOwner": "Not Available",
+            "datesOfBirth": [
+                {"age": 40, "sourceSummary": {"sources": ["synthetic-source-b"]}}
+            ],
+            "datesOfDeath": [
+                {"date": "9/30/2025"}
+            ],
+            "deathRecords": {"isDeceased": true, "sourceSummary": {"sources": ["synthetic-source-c"]}},
+            "akas": [
+                {
+                    "prefix": "Ms",
+                    "firstName": "Rye",
+                    "middleName": "J",
+                    "lastName": "Sample",
+                    "suffix": "Sr",
+                    "rawNames": ["RYE SAMPLE"],
+                    "publicFirstSeenDate": "3/2/2011",
+                    "totalFirstSeenDate": "3/1/2011",
+                    "sourceSummary": {"sources": ["synthetic-source-d"]}
+                }
+            ],
+            "mergedNames": [
+                {
+                    "prefix": "Mx",
+                    "firstName": "Riley",
+                    "middleName": "Quinn",
+                    "lastName": "Sample",
+                    "suffix": "III",
+                    "rawNames": ["RILEY QUINN SAMPLE"],
+                    "publicFirstSeenDate": "1/9/2004",
+                    "totalFirstSeenDate": "1/8/2004",
+                    "sourceSummary": {"sources": ["synthetic-source-e"]}
+                }
+            ],
+            "locations": [
+                {"city": "Exampleton", "state": "OH"}
+            ],
+            "addresses": [
+                {
+                    "fullAddress": "100 N Sample Way SE Apt 4B; Exampleton, OH 45000-0001",
+                    "houseNumber": "100",
+                    "streetPreDirection": "N",
+                    "streetName": "Sample",
+                    "streetPostDirection": "SE",
+                    "streetType": "Way",
+                    "unit": "4B",
+                    "unitType": "Apt",
+                    "city": "Exampleton",
+                    "state": "OH",
+                    "county": "Sample",
+                    "zip": "45000",
+                    "zip4": "0001",
+                    "dpc": "01",
+                    "latitude": "39.000100",
+                    "longitude": "-84.000200",
+                    "addressHash": "-1000000000000000003",
+                    "bldgCode": "B1",
+                    "utilityCode": "U1",
+                    "propertyIndicator": "P1",
+                    "firstReportedDate": "3/2/2011",
+                    "lastReportedDate": "8/14/2025",
+                    "publicFirstSeenDate": "3/3/2011",
+                    "totalFirstSeenDate": "3/1/2011",
+                    "isPublic": true,
+                    "isDeliverable": true,
+                    "isMergedAddress": true,
+                    "unitCount": 12,
+                    "addressOrder": 1,
+                    "highRiskMarker": {"isHighRisk": true, "sic": "9999", "addressType": "Synthetic"},
+                    "phoneNumbers": ["(312) 555-0142"],
+                    "addressQualityCodes": ["AA", "BB"],
+                    "neighbors": [{"name": "Synthetic Neighbor"}],
+                    "neighborSummaryRecords": [{"count": 1}],
+                    "sourceSummary": {"sources": ["synthetic-source-f"]}
+                }
+            ],
+            "phoneNumbers": [
+                {
+                    "phoneNumber": "(312) 555-0142",
+                    "company": "Example Wireless",
+                    "location": "Exampleton, OH",
+                    "phoneType": "Wireless",
+                    "latitude": "39.000100",
+                    "longitude": "-84.000200",
+                    "firstReportedDate": "5/5/2015",
+                    "lastReportedDate": "9/30/2025",
+                    "publicFirstSeenDate": "5/6/2015",
+                    "totalFirstSeenDate": "5/4/2015",
+                    "isConnected": true,
+                    "isPublic": true,
+                    "phoneOrder": 1,
+                    "sourceSummary": {"sources": ["synthetic-source-g"]}
+                }
+            ],
+            "emailAddresses": [
+                {
+                    "emailAddress": "riley.sample@example.com",
+                    "emailOrdinal": 1,
+                    "isPremium": true,
+                    "nonBusiness": 1,
+                    "emailEngagementData": {
+                        "isBounce": true,
+                        "isMatched": true,
+                        "isGoodDomain": true,
+                        "sendTime": 9,
+                        "engagementScore": 3,
+                        "frequency": "Weekly",
+                        "bestDayOfTheWeek": "Tuesday",
+                        "bestTimeOfTheDay": "Morning",
+                        "naics": ["111111"],
+                        "lastCheckDate": "2025-08-14T00:00:00Z",
+                        "lastTouchDate": "2025-08-01T00:00:00Z"
+                    },
+                    "sourceSummary": {"sources": ["synthetic-source-h"]}
+                }
+            ],
+            "relativesSummary": [
+                {
+                    "tahoeId": "G-1000000000000000111",
+                    "prefix": "Mr",
+                    "firstName": "Avery",
+                    "middleName": "J",
+                    "lastName": "Example",
+                    "suffix": "Jr",
+                    "dob": "9/XX/1987",
+                    "relativeLevel": "ab",
+                    "relativeType": "Spouse",
+                    "city": "Exampleton",
+                    "state": "OH",
+                    "spouse": 1,
+                    "score": 850,
+                    "sharedHouseholdIds": ["H-0000000000000001"],
+                    "isPrivate": true,
+                    "isOptedOut": true,
+                    "isDeceased": true
+                }
+            ],
+            "associatesSummary": [
+                {
+                    "tahoeId": "G-1000000000000000112",
+                    "prefix": "Ms",
+                    "firstName": "Jordan",
+                    "middleName": "K",
+                    "lastName": "Placeholder",
+                    "suffix": "Sr",
+                    "dob": "1/XX/1970",
+                    "score": 450
+                }
+            ],
+            "associates": [
+                {
+                    "tahoeId": "G-1000000000000000112",
+                    "name": {"firstName": "Jordan", "lastName": "Placeholder"},
+                    "fullName": "Jordan Placeholder",
+                    "age": 55,
+                    "associates": [
+                        {"tahoeId": "G-1000000000000000113"}
+                    ]
+                }
+            ],
+            "indicators": {
+                "hasBankruptcyRecords": 1,
+                "hasBusinessRecords": 2,
+                "hasDivorceRecords": 3,
+                "hasDomainsRecords": 4,
+                "hasEvictionsRecords": 5,
+                "hasFeinRecords": 6,
+                "hasForeclosuresRecords": 7,
+                "hasJudgmentRecords": 8,
+                "hasLienRecords": 9,
+                "hasMarriageRecords": 10,
+                "hasProfessionalLicenseRecords": 11,
+                "hasPropertyRecords": 12,
+                "hasVehicleRegistrationsRecords": 13,
+                "hasWorkplaceRecords": 14,
+                "hasDeaRecords": 15,
+                "hasPropertyV2Records": 16,
+                "hasForeclosuresV2Records": 17,
+                "hasUccRecords": 18,
+                "hasDebtRecords": 19
+            },
+            "driversLicenseDetail": [{"state": "OH"}],
+            "propensityToPayScore": {"transactionId": "T-0000000001", "measures": []},
+            "relatives": [{"tahoeId": "G-1000000000000000111"}]
+        }
+    ],
+    "pagination": {"currentPageNumber": 2, "resultsPerPage": 1, "totalPages": 3, "totalResults": 3},
+    "counts": {
+        "names": 1,
+        "addresses": 2,
+        "relatives": 3,
+        "associates": 4,
+        "debtRecords": 5,
+        "datesOfBirth": 6,
+        "datesOfDeath": 7,
+        "deathRecords": 8,
+        "phoneNumbers": 9,
+        "expectedCount": 10,
+        "searchResults": 11,
+        "emailAddresses": 12,
+        "businessRecords": 13,
+        "evictionRecords": 14,
+        "foreclosureRecords": 15,
+        "foreclosureV2Records": 16,
+        "socialSecurityNumbers": 17,
+        "professionalLicenseRecords": 18,
+        "searchResultsOverflow": true
+    },
+    "requestId": "synthetic-request-0109",
+    "isError": false,
+    "message": "Synthetic message: every field.",
+    "error": {
+        "inputErrors": [{"field": "Synthetic"}],
+        "warnings": ["Synthetic warning."]
+    },
+    "criteriaType": {"type": "Synthetic"},
+    "smartSearchStatistics": {"steps": [1]},
+    "searchCriteria": [{"echo": "ignored"}],
+    "databaseQueryInfo": [],
+    "requestType": "Person",
+    "requestTime": "2026-10-17T00:00:00Z",
+    "totalRequestExecutionTimeMs": 412
+}

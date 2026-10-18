@@ -210,3 +210,118 @@ func FuzzDecodeKey(f *testing.F) {
 		assert.Equal(t, want, string(keyBytes(lit)))
 	})
 }
+
+// bdSearchBody returns a successful Person Search envelope whose one person
+// holds a tahoeId and, at the dotted member path under it, a list of n
+// comma-separated copies of entry. A path of "" is the persons list itself.
+func bdSearchBody(member, entry string, n int) []byte {
+	list := `[` + strings.TrimSuffix(strings.Repeat(entry+",", n), ",") + `]`
+	if member == "" {
+		return []byte(`{"isError":false,"persons":` + list + `}`)
+	}
+	inner := list
+	parts := strings.Split(member, ".")
+	for i := len(parts) - 1; i > 0; i-- {
+		inner = `{"` + parts[i] + `":` + inner + `}`
+		if parts[i-1] == "addresses" || parts[i-1] == "emailAddresses" {
+			inner = `[` + inner + `]`
+		}
+	}
+	return []byte(`{"isError":false,"persons":[{"tahoeId":"G-1","` + parts[0] + `":` + inner + `}]}`)
+}
+
+// TestBoundsSearchListEntries proves the per-collection SDK bound on every
+// Person Search list: 1,000 entries decode, the 1,001st fails the call loudly
+// (never truncated), and JSON null elements do not count.
+func TestBoundsSearchListEntries(t *testing.T) {
+	tests := []struct {
+		member, entry, field string
+	}{
+		{member: "", entry: `{}`, field: "persons"},
+		{member: "datesOfBirth", entry: `{}`, field: "persons[0].datesOfBirth"},
+		{member: "datesOfDeath", entry: `0`, field: "persons[0].datesOfDeath"},
+		{member: "akas", entry: `{}`, field: "persons[0].akas"},
+		{member: "mergedNames", entry: `{}`, field: "persons[0].mergedNames"},
+		{member: "locations", entry: `{}`, field: "persons[0].locations"},
+		{member: "addresses", entry: `{}`, field: "persons[0].addresses"},
+		{member: "phoneNumbers", entry: `{}`, field: "persons[0].phoneNumbers"},
+		{member: "emailAddresses", entry: `{}`, field: "persons[0].emailAddresses"},
+		{member: "relativesSummary", entry: `{}`, field: "persons[0].relativesSummary"},
+		{member: "associatesSummary", entry: `{}`, field: "persons[0].associatesSummary"},
+		{member: "associates", entry: `{}`, field: "persons[0].associates"},
+		{member: "name.rawNames", entry: `""`, field: "persons[0].name.rawNames"},
+		{member: "addresses.phoneNumbers", entry: `""`, field: "persons[0].addresses[0].phoneNumbers"},
+		{member: "addresses.addressQualityCodes", entry: `""`, field: "persons[0].addresses[0].addressQualityCodes"},
+		{member: "addresses.neighbors", entry: `0`, field: "persons[0].addresses[0].neighbors"},
+		{member: "addresses.neighborSummaryRecords", entry: `0`, field: "persons[0].addresses[0].neighborSummaryRecords"},
+		{member: "emailAddresses.emailEngagementData.naics", entry: `""`, field: "persons[0].emailAddresses[0].emailEngagementData.naics"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			_, err := sdDecode(bdSearchBody(tt.member, tt.entry, maxListEntries), false)
+			require.NoError(t, err)
+
+			_, err = sdDecode(bdSearchBody(tt.member, tt.entry, maxListEntries+1), false)
+			require.ErrorIs(t, err, ErrResponseTooLarge)
+			ce := asCallError(t, err)
+			assert.Equal(t, FailureResponseTooLarge, ce.Kind)
+			assert.Equal(t, http.StatusOK, ce.StatusCode)
+			assert.Equal(t, tt.field, ce.Field)
+			require.ErrorIs(t, err, errTooManyEntries)
+
+			_, err = sdDecode(bdSearchBody(tt.member, tt.entry+`,null`, maxListEntries), false)
+			require.NoError(t, err, "null elements are not entries")
+		})
+	}
+}
+
+// TestBoundsSearchHostileBodiesStayCheap guards Person Search against memory
+// amplification: lists nested in lists, extras that normalization escapes six
+// times over, and many small entries must fail on the decode budget, or cost a
+// small multiple of the body, never hundreds of MiB.
+func TestBoundsSearchHostileBodiesStayCheap(t *testing.T) {
+	testutil.SkipUnderRace(t)
+	const size = 1 << 20
+	// fill repeats el, comma-separated, between prefix and suffix, to about size
+	// bytes.
+	fill := func(prefix, el, suffix string) []byte {
+		n := (size - len(prefix) - len(suffix)) / (len(el) + 1)
+		return []byte(prefix + strings.TrimSuffix(strings.Repeat(el+",", n), ",") + suffix)
+	}
+	emptyAddresses := `{"tahoeId":"G-1","addresses":[` + strings.TrimSuffix(strings.Repeat(`{},`, maxListEntries), ",") + `]}`
+	emptyAssociates := `{"tahoeId":"G-1","associates":[` + strings.TrimSuffix(strings.Repeat(`{},`, maxListEntries), ",") + `]}`
+	var escaped strings.Builder
+	escaped.WriteString(`{"isError":false,"persons":[{"tahoeId":"G-1"`)
+	for i := 0; escaped.Len() < size; i++ {
+		escaped.WriteString(`,"k` + strconv.Itoa(i) + `":"` + strings.Repeat("<", 1000) + `"`)
+	}
+	escaped.WriteString(`}]}`)
+	tests := []struct {
+		name   string
+		body   []byte
+		budget bool // fails on the decode budget
+	}{
+		{name: "persons of empty addresses", body: fill(`{"isError":false,"persons":[`, emptyAddresses, `]}`), budget: true},
+		{name: "persons of empty associates", body: fill(`{"isError":false,"persons":[`, emptyAssociates, `]}`), budget: true},
+		{name: "extras escaped six times over", body: []byte(escaped.String()), budget: true},
+		{name: "empty persons", body: fill(`{"isError":false,"persons":[`, `{}`, `]}`)},
+		{name: "names of empty raw names", body: fill(`{"isError":false,"persons":[{"tahoeId":"G-1","akas":[`, `{"rawNames":[""]}`, `]}]}`)},
+		{name: "many unknown envelope members", body: []byte(stManyKeys("k", size/16, `,"isError":false,"persons":[]`))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := sdDecode(tt.body, false)
+			if tt.budget {
+				require.ErrorIs(t, err, ErrResponseTooLarge)
+				require.ErrorIs(t, err, errDecodeBudget)
+			} else if err != nil {
+				require.ErrorIs(t, err, ErrResponseTooLarge, "only a bound may fail it")
+			}
+			grew := testutil.HeapGrowth(func() {
+				_, _ = sdDecode(tt.body, false)
+			})
+			t.Logf("%d bytes allocated decoding a %d-byte body", grew, len(tt.body))
+			assert.Less(t, grew, uint64(8*size), "decoding must cost a small multiple of the body")
+		})
+	}
+}

@@ -830,15 +830,14 @@ func TestDecodeReadObjectFieldCounts(t *testing.T) {
 			}
 		}
 	})
-	t.Run("setField ignores an index out of range", func(t *testing.T) {
+	t.Run("an index past the storage is ignored", func(t *testing.T) {
 		var o object
-		o.reserve(9)
-		for _, i := range []int{-1, 9, 100} {
-			o.setField(i, []byte("x"))
+		dup := -1
+		for _, i := range []int{9, 100} {
+			o.keep(i, []byte("x"), make([][]byte, 1), false, &dup)
 			assert.Nil(t, o.field(i))
 		}
-		o.setField(8, []byte("y"))
-		assert.Equal(t, "y", string(o.field(8)))
+		assert.Equal(t, -1, dup)
 	})
 }
 
@@ -901,7 +900,8 @@ func TestDecodeReadObjectNeverPanics(t *testing.T) {
 				for i := -1; i <= len(names); i++ {
 					_ = o.field(i)
 				}
-				_, _ = readSlots([]byte(s), slots, track)
+				_, _ = readSlots([]byte(s), slots, track, nil)
+				_, _ = readSlots([]byte(s), slots, track, make([][]byte, len(slots)-inlineFields))
 			}
 		}, "seed %q", s)
 	}

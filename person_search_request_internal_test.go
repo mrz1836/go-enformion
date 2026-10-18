@@ -23,6 +23,10 @@ const (
 	sqLast   = "Sample"
 	sqPhone  = "312-555-0142"
 	sqDOB    = "DOB"
+
+	// sqPhoneNumber is the synthetic phone number in the documented
+	// (###) ###-#### form.
+	sqPhoneNumber = "(312) 555-0142"
 )
 
 // sqBase returns a valid Teaser request with one criterion, a name.
@@ -46,7 +50,7 @@ func sqFull() PersonSearchRequest {
 			{AddressLine2: "45000"},
 		},
 		Email:    "riley.sample@example.com",
-		Phone:    "(312) 555-0142",
+		Phone:    sqPhoneNumber,
 		ClientIP: "192.0.2.10",
 		Relatives: []PersonSearchRequestName{
 			{FirstName: "Avery", LastName: dcLast},
@@ -490,7 +494,7 @@ func TestSearchRequestCriteria(t *testing.T) {
 		"age range":    func(r *PersonSearchRequest) { r.AgeRange = "30-50" },
 		"address":      func(r *PersonSearchRequest) { r.Addresses = []PersonSearchRequestAddress{{County: sqLast}} },
 		"email":        func(r *PersonSearchRequest) { r.Email = "riley.sample@example.com" },
-		"phone":        func(r *PersonSearchRequest) { r.Phone = "(312) 555-0142" },
+		"phone":        func(r *PersonSearchRequest) { r.Phone = sqPhoneNumber },
 		"client IP":    func(r *PersonSearchRequest) { r.ClientIP = "192.0.2.10" },
 		"relative":     func(r *PersonSearchRequest) { r.Relatives = []PersonSearchRequestName{{FirstName: "Avery"}} },
 		"Tahoe ID":     func(r *PersonSearchRequest) { r.TahoeIDs = []string{"G-1000000000000000042"} },
