@@ -1,10 +1,12 @@
 package enformion
 
 import (
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,4 +127,68 @@ func TestClientDefaultTransport(t *testing.T) {
 	og, ok := other.Transport.(redirectGuard)
 	require.True(t, ok)
 	assert.NotSame(t, tr, og.next, "each client has its own pool")
+}
+
+// TestClientResponseLimits proves each operation's default response limit, and
+// that WithMaxResponseBytes, once given, governs every operation. Contact
+// Enrichment calls leave the call's limit at 0; Person Search calls carry the
+// client's searchMaxBytes.
+func TestClientResponseLimits(t *testing.T) {
+	tests := []struct {
+		name            string
+		opts            []Option
+		contact, search int64
+	}{
+		{name: "defaults", contact: defaultMaxResponseBytes, search: maxResponseBytesLimit},
+		{name: "explicit 4 KiB", opts: []Option{WithMaxResponseBytes(4 << 10)}, contact: 4 << 10, search: 4 << 10},
+		{name: "explicit 1 MiB", opts: []Option{WithMaxResponseBytes(1 << 20)}, contact: 1 << 20, search: 1 << 20},
+		{name: "explicit 16 MiB", opts: []Option{WithMaxResponseBytes(16 << 20)}, contact: 16 << 20, search: 16 << 20},
+		{
+			name: "last option wins", opts: []Option{WithMaxResponseBytes(16 << 20), WithMaxResponseBytes(2 << 10)},
+			contact: 2 << 10, search: 2 << 10,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The response declares size bytes, so a length over the limit is
+			// refused before anything is read; only a body of at most 2 MiB is
+			// real.
+			var size int64
+			rt := testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				testutil.Drain(r)
+				var body io.ReadCloser = &testutil.EndlessBody{}
+				if size <= 2<<20 {
+					body = testutil.NewBody(strings.Repeat(" ", int(size)))
+				}
+				return testutil.Response(r, http.StatusOK, body, size), nil
+			})
+			c, err := NewClient("ci-key-name", "ci-key-password", append([]Option{
+				WithTestBaseURL("https://127.0.0.1"), WithHTTPClient(&http.Client{Transport: rt}),
+			}, tt.opts...)...)
+			require.NoError(t, err)
+			assert.Equal(t, tt.search, c.searchMaxBytes)
+
+			for _, op := range []struct {
+				name  string
+				limit int64
+				call  call
+			}{
+				{name: "contact", limit: tt.contact, call: call{path: contactEnrichPath, searchType: contactEnrichSearchType}},
+				{name: "search", limit: tt.search, call: call{path: "/PersonSearch", searchType: "Teaser", maxBytes: c.searchMaxBytes}},
+			} {
+				size = op.limit + 1
+				_, err = c.send(t.Context(), &op.call)
+				ce := asCallError(t, err)
+				assert.Equal(t, FailureResponseTooLarge, ce.Kind, "%s: one byte over its limit", op.name)
+				require.ErrorIs(t, err, errResponseTooLarge)
+
+				// Exactly the limit, or 2 MiB under a larger one: over Contact
+				// Enrichment's default, within Person Search's.
+				size = min(op.limit, 2<<20)
+				ex, err := c.send(t.Context(), &op.call)
+				require.NoError(t, err, "%s: within its limit", op.name)
+				assert.Len(t, ex.body, int(size))
+			}
+		})
+	}
 }

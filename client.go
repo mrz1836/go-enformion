@@ -31,8 +31,9 @@ const (
 // value, so formatting a Client, or a struct holding one, with any fmt verb or a
 // reflection-based dumper never prints them.
 type Client struct {
-	send        sender
-	diagnostics bool
+	send           sender
+	searchMaxBytes int64
+	diagnostics    bool
 }
 
 // Option configures NewClient. Options only record their argument: NewClient
@@ -46,6 +47,7 @@ type options struct {
 	httpClientSet  bool
 	timeout        time.Duration
 	maxBytes       int64
+	maxBytesSet    bool
 	testBaseURL    string
 	testBaseURLSet bool
 	diagnostics    bool
@@ -81,9 +83,14 @@ func NewClient(keyName, keyPassword string, opts ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	searchMaxBytes := int64(maxResponseBytesLimit)
+	if o.maxBytesSet {
+		searchMaxBytes = o.maxBytes
+	}
 	return &Client{
-		send:        newSender(o.client(), origin, keyName, keyPassword, o.timeout, o.maxBytes),
-		diagnostics: o.diagnostics,
+		send:           newSender(o.client(), origin, keyName, keyPassword, o.timeout, o.maxBytes),
+		searchMaxBytes: searchMaxBytes,
+		diagnostics:    o.diagnostics,
 	}, nil
 }
 
@@ -111,11 +118,16 @@ func WithTimeout(d time.Duration) Option {
 }
 
 // WithMaxResponseBytes limits the response body, counted after any transport
-// decompression. The default is 1 MiB; n must be from 1 byte to 16 MiB. A
-// larger HTTP 200 body fails with ErrResponseTooLarge, after the provider may
-// already have billed the call.
+// decompression; n must be from 1 byte to 16 MiB. Without it, the limit is
+// 1 MiB for EnrichContact and 16 MiB for SearchPersons, whose pages can hold
+// many people; with it, n applies to every operation. A larger HTTP 200 body
+// fails with ErrResponseTooLarge, after the provider may already have billed
+// the call.
 func WithMaxResponseBytes(n int64) Option {
-	return func(o *options) { o.maxBytes = n }
+	return func(o *options) {
+		o.maxBytes = n
+		o.maxBytesSet = true
+	}
 }
 
 // WithTestBaseURL sends calls to a local test server instead of the provider.
