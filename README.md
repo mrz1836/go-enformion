@@ -101,11 +101,17 @@ go-enformion is a Go SDK for the [EnformionGO](https://go.enformion.com/develope
 per call, no retries or redirects, bounded reads, strict JSON decoding, and errors that never contain
 credentials, personal data or provider text.
 
-The first supported API is **Contact Enrichment** (`POST https://devapi.enformion.com/Contact/Enrich`,
-search type `DevAPIContactEnrich`). Give it a subject with at least two of name, phone, email and address,
-and it returns the provider's top person match (name, age, addresses, phones and emails) as typed Go
-values, with every field optional and nothing invented. The rest of the EnformionGO API is planned for
-future releases: see [Supported APIs](#-supported-apis).
+Two APIs are supported today:
+
+- **Contact Enrichment** (`POST https://devapi.enformion.com/Contact/Enrich`, search type
+  `DevAPIContactEnrich`). Give it a subject with at least two of name, phone, email and address, and it
+  returns the provider's top person match (name, age, addresses, phones and emails).
+- **Person Search** (`POST https://devapi.enformion.com/PersonSearch`, in one of four documented search
+  modes). Give it a mode and at least one criterion, and it returns one page of the provider's candidate
+  persons, with their names, addresses, phones, emails, relatives, associates and indicators.
+
+Both return typed Go values, with every field optional and nothing invented. The rest of the EnformionGO
+API is planned for future releases: see [Supported APIs](#-supported-apis).
 
 <br/>
 
@@ -130,7 +136,7 @@ labels as Pro.
 | | [Address ID Plus](https://enformiongo.readme.io/reference/address-id-plus) | Planned |
 | | [Address AutoComplete](https://enformiongo.readme.io/reference/address-autocomplete) | Planned |
 | **Lead verification** | [ELeadVerify](https://enformiongo.readme.io/reference/eleadverify) | Planned |
-| **People data** | [Person Search](https://enformiongo.readme.io/reference/person-search) | Planned |
+| **People data** | [Person Search](https://enformiongo.readme.io/reference/person-search) | Available: `SearchPersons` |
 | | [ID Verification](https://enformiongo.readme.io/reference/id-verification) | Planned |
 | | [Census Search](https://enformiongo.readme.io/reference/census) | Planned |
 | | [Debt Search V2](https://enformiongo.readme.io/reference/debt-v2) <sup>PRO</sup> | Planned |
@@ -240,7 +246,7 @@ A `Client` is immutable and safe for concurrent use; create one and reuse it.
 | Option | Default | Limits | Effect |
 |---|---|---|---|
 | `WithTimeout(d)` | 30s | `0 < d ≤ 5m` | Bounds each call, including reading the whole body. The context deadline applies too. |
-| `WithMaxResponseBytes(n)` | 1 MiB | 1 B to 16 MiB | Limits the (decompressed) response body. |
+| `WithMaxResponseBytes(n)` | 1 MiB for `EnrichContact`, 16 MiB for `SearchPersons` | 1 B to 16 MiB | Limits the (decompressed) response body. Once given, `n` applies to every operation. |
 | `WithHTTPClient(hc)` | fresh transport | non-nil | Calls go through a **copy** of `hc` that refuses redirects and has no cookie jar; `hc` is never modified. |
 | `WithTestBaseURL(url)` | production | `https` on `127.0.0.0/8` or `[::1]` | Points the client at a local test server. There is no other base URL option. |
 | `WithProviderDiagnostics()` | off | | Keeps provider messages on errors, reachable only through `(*CallError).Diagnostics()`. |
@@ -333,6 +339,136 @@ serialization, not the provider's wire format.
 
 <br/>
 
+### Person Search
+
+`SearchPersons` sends one page request in one of the four documented search modes and returns that page
+of the provider's candidate persons. The provider's terms apply to every search: see
+[Personal data and permitted use](#%EF%B8%8F-behavior).
+
+<br/>
+
+#### Build a request
+
+```go
+req := enformion.PersonSearchRequest{
+	Mode:      enformion.PersonSearchModePerson, // required: the search type header
+	FirstName: "Avery",
+	LastName:  "Example",
+	Addresses: []enformion.PersonSearchRequestAddress{
+		{AddressLine2: "Exampleton, OH"}, // city and state, state, or ZIP
+	},
+	Includes:       []enformion.PersonSearchInclude{enformion.PersonSearchIncludeAddresses},
+	FilterOptions:  []enformion.PersonSearchFilter{enformion.PersonSearchFilterIncludeLowQualityAddresses},
+	Page:           1,  // 0 = provider default
+	ResultsPerPage: 10, // 0 = provider default
+	SessionID:      "batch-7f3a9c-0001",
+}
+```
+
+The mode is sent as the `galaxy-search-type` header, never in the body. The provider documents four:
+
+| Mode | Search type | Documented as |
+|---|---|---|
+| `PersonSearchModePerson` | `Person` | Detailed results, mainly for "logged in or paying" users |
+| `PersonSearchModeTeaser` | `Teaser` | For "logged out" users: "Most of the data elements in a teaser search are masked and/or limited by the quantity returned"; suggested as the initial search |
+| `PersonSearchModeReversePhonePerson` | `ReversePhonePerson` | The same text as `Person`. A mode of Person Search, not the separate Reverse Phone Search API |
+| `PersonSearchModeReversePhonePersonTeaser` | `ReversePhonePersonTeaser` | The same text as `Teaser` |
+
+At least one criterion is required: a name part, an AKA, `DOB`, an age field, an address, `Email`, `Phone`,
+`ClientIP`, a relative or a Tahoe ID. The SDK adds no rule the provider does not document: it does not
+decide which criteria a mode needs (a reverse-phone mode does not require `Phone`) or which age field wins.
+Every limit below is the SDK's own, as the provider documents none.
+
+| Field | Sent as | Rules |
+|---|---|---|
+| `FirstName`, `MiddleName`, `LastName` | the same names | Text rules: valid UTF-8, at most 256 bytes, no control characters, not only whitespace |
+| `AKAs`, `Relatives` | `Akas`, `Relatives`: lists of `{FirstName, MiddleName, LastName}` | At most 32 entries; an entry with every field empty is `blank`. The shape is unverified |
+| `DOB` | `Dob` | `mm/dd/yyyy`, zero-padded, a real date |
+| `Age`, `AgeRangeMinAge`, `AgeRangeMaxAge` | the same names | `0` (not sent) or 1 to 150; never checked against each other |
+| `AgeRange` | `AgeRange` | `N-M`: one to three digits each, each at most 150 |
+| `Addresses` | `Addresses`: a list of `{AddressLine1, AddressLine2, County}` | At most 32 entries; an entry with every field empty is `blank` |
+| `Email`, `Phone` | the same names | Text rules; the phone format is not enforced |
+| `ClientIP` | `ClientIp` | A canonical dotted IPv4 address, sent as a string (unverified: the provider types it as an integer) |
+| `TahoeIDs` | `TahoeIds` | At most 32 IDs, none empty, such as a result's `TahoeID` |
+| `FirstNameCharOffset`, `LastNameCharOffset` | the same names | `nil` (not sent) or 0 to 256; `new(0)` sends `0` |
+| `DOBFormat` | `DobFormat` | Text rules, sent verbatim |
+| `MaxAddressYears`, `MaxPhoneYears` | the same names | `nil` (not sent) or 0 to 150; `new(0)` sends `0` |
+| `Includes`, `FilterOptions` | the same names | At most 32 tokens each, 1 to 128 ASCII letters and digits, sent verbatim, in order, duplicates kept |
+| `Page`, `ResultsPerPage` | the same names | `0` (provider default) or from 1; `ResultsPerPage` at most 1,000 |
+| `SessionID` | `galaxy-client-session-id` header | Empty, or 1 to 128 bytes of visible ASCII |
+
+Includes and filters are enabled per account by the provider. Its includes page lists labels rather than
+tokens, and only `Addresses` and `PhoneNumbers` appear as tokens in its documentation; the
+`PersonSearchInclude` constants also cover `EmailAddresses`, `DatesOfBirth`, `Relatives`,
+`RelativesSummary` and `Associates`, which have been observed to be accepted. The `PersonSearchFilter`
+constants quote the provider's descriptions, several of which contradict the filter's name; the SDK sends
+the token and does not interpret it. Any other alphanumeric token can be passed as
+`PersonSearchInclude("...")` or `PersonSearchFilter("...")`.
+
+A failure names the field and list index, never the value, such as
+`enformion: invalid request: Addresses[1].County: control_character`. The new reasons are `unsupported`
+(an unknown mode), `too_many` (a list over 32 entries) and `no_criteria`.
+
+<br/>
+
+#### Read the result
+
+```go
+page, err := client.SearchPersons(ctx, req)
+if err != nil {
+	return err
+}
+for _, p := range page.Persons { // the provider's order; duplicates kept
+	fmt.Println(p.TahoeID, p.FullName)
+	for _, ph := range p.PhoneNumbers {
+		connected := "not reported"
+		if ph.IsConnected != nil {
+			connected = strconv.FormatBool(*ph.IsConnected) // a provider flag, not consent to contact
+		}
+		fmt.Println(" ", ph.PhoneNumber, ph.PhoneType, connected)
+	}
+}
+if len(page.Persons) == 0 {
+	// no candidates in the response; NOT proof that no match exists
+}
+```
+
+| Field | Type | Absent or null | Notes |
+|---|---|---|---|
+| `Persons` | `[]PersonSearchPerson` | `nil` | The page's candidates, in the provider's order, duplicates kept. `null` or `[]` is a page without candidates; an envelope without `persons` fails as `ErrUnexpectedResponse`. |
+| `Pagination` | `PersonSearchPagination` | zero | `CurrentPageNumber`, `ResultsPerPage`, `TotalPages`, `TotalResults`, each `*int`. The member names are inferred. |
+| `Counts` | `PersonSearchCounts` | zero | The provider's `counts`: uninterpreted `*int` counts and `SearchResultsOverflow *bool`. |
+| `RequestID` | `string` | `""` | Kept only when 1 to 128 visible ASCII bytes. |
+| `CriteriaType`, `SmartSearchStatistics` | `json.RawMessage` | `nil` | Undocumented structure, kept raw. May echo the request's personal data. |
+| `Diagnostics` | `ProviderDiagnostics` | empty | As for Contact Enrichment. |
+| `PersonSearchPerson.TahoeID`, `FullName`, `DOB`, `DOD`, dates | `string` | `""` | Provider text, never parsed; teaser modes may mask it. `IsCurrentPropertyOwner` is text too. |
+| `Age`, `SparseFlag` | `*int` | `nil` | `0` is `&0`. |
+| `IsPublic`, `IsPremium`, `IsOptedOut`, `IsEnterpriseOptedOut`, `HasAdditionalData` | `*bool` | `nil` | Provider flags, not consent or eligibility. |
+| `Name`, `AKAs`, `MergedNames` | `PersonSearchName` | zero, `nil` | Prefix, name parts, suffix, `RawNames`, first-seen dates and a raw `SourceSummary`. |
+| `Addresses`, `PhoneNumbers`, `EmailAddresses`, `Locations`, `DatesOfBirth` | slices | `nil` | Every entry kept; more than 1,000 entries fails the call. Coordinates, ZIP codes and hashes are text. |
+| `RelativesSummary`, `AssociatesSummary` | slices | `nil` | The provider's summaries of other people. Its labels (`RelativeType`) and `Score` are its own; the SDK infers no relationship. |
+| `Associates` | `[]PersonSearchPerson` | `nil` | Full associated persons (the `Associates` include), decoded one level deep. |
+| `Indicators` | `PersonSearchIndicators` | zero | Nineteen `*int` record indicators, uninterpreted: counts above 1 have been observed. |
+| `Extra` | `map[string]json.RawMessage` | `nil` | Every person member the SDK does not decode, by its key as sent: see [raw and ignored members](#%EF%B8%8F-behavior). |
+
+The SDK never selects, ranks, merges or deduplicates candidates or entries, and never picks a "best" match.
+A candidate is the provider's observation, not identity verification. Results marshal to JSON and back
+unchanged (`reflect.DeepEqual`), in this SDK's own serialization.
+
+<br/>
+
+#### Pages
+
+Each call returns one page. The SDK never fetches the next one: ask for it explicitly, knowing that **each
+page is a separate call that may be billed**.
+
+```go
+req.Page = 2
+next, err := client.SearchPersons(ctx, req) // a second, separately billable call
+```
+
+<br/>
+
 ### Handle errors
 
 Validation failures are `*ValidationError` values, and **nothing was sent**. Every other failure is a
@@ -344,9 +480,9 @@ Validation failures are `*ValidationError` values, and **nothing was sent**. Eve
 | `rate_limited` | `ErrRateLimited` | HTTP 429 (rate limit or monthly quota). The SDK never retries. |
 | `rejected` | `ErrRejected` | Another 4xx (a 404 is never a "no match"), or HTTP 200 with `isError: true` |
 | `upstream` | `ErrUpstream` | HTTP 5xx |
-| `unexpected_response` | `ErrUnexpectedResponse` | 1xx, 3xx (never followed), another 2xx, 600 and above, a body that is not an object, a missing or non-boolean `isError`, or a person, its name, or an address, phone or email entry whose only data is under unrecognized keys |
+| `unexpected_response` | `ErrUnexpectedResponse` | 1xx, 3xx (never followed), another 2xx, 600 and above, a body that is not an object, a missing or non-boolean `isError`, a Person Search body without `persons`, or a person or one of its record entries (a name, address, phone, email and, for Person Search, a location, relative, associate, date of birth or death record) whose only data is under unrecognized keys |
 | `malformed_response` | `ErrMalformedResponse` | Invalid UTF-8 or JSON, trailing data, a repeated key, or a recognized field of the wrong type |
-| `response_too_large` | `ErrResponseTooLarge` | An HTTP 200 body over the limit, or a person address, phone or email list of more than 1,000 entries |
+| `response_too_large` | `ErrResponseTooLarge` | An HTTP 200 body over the limit, a decoded list of more than 1,000 entries, or a Person Search body that would decode to more than four times its size plus 1 MiB |
 | `transport` | `ErrTransport` | DNS, connection, TLS, proxy, reset or truncated body |
 | `timeout` | `ErrTimeout` **and** `context.DeadlineExceeded` | The SDK's timeout, an `http.Client` timeout, or a network timeout |
 | `canceled` | `context.Canceled` | The caller's context was canceled |
@@ -410,6 +546,12 @@ type ContactEnricher interface {
 
 var _ ContactEnricher = (*enformion.Client)(nil)
 
+type PersonSearcher interface {
+	SearchPersons(context.Context, enformion.PersonSearchRequest) (*enformion.PersonSearchResult, error)
+}
+
+var _ PersonSearcher = (*enformion.Client)(nil)
+
 fake := &fakeEnricher{err: &enformion.CallError{Kind: enformion.FailureRateLimited, StatusCode: 429}}
 // errors.Is(err, enformion.ErrRateLimited) is true for the fake's error too.
 ```
@@ -457,7 +599,11 @@ never reads credentials or configuration from the environment, but its request a
 redacting formatter: **access
 control, logging, retention, security and permitted use are your application's responsibility**.
 Serializing or hashing personal data does not anonymize it. Error strings never contain personal data;
-provider diagnostics on errors are off unless you opt in.
+provider diagnostics on errors are off unless you opt in. Person Search results also describe other people
+(relatives, associates and neighbors) and keep undocumented members as raw JSON, which prints in full.
+
+A result is the provider's observation, **not identity verification**: no match, candidate, label, score,
+indicator or flag establishes anyone's identity, consent or eligibility for any purpose.
 
 The provider's [terms](https://go.enformion.com/terms/) restrict use of its data. In summary, and with no
 claim of legal suitability (read the current terms yourself):
@@ -531,11 +677,99 @@ limits); see [Examples & Tests](#-examples--tests).
 </details>
 
 <details>
+<summary><strong><code>Person Search: pages, modes and billing</code></strong></summary>
+<br/>
+
+- Each `SearchPersons` call is **one live, potentially billable call for one page**. The provider documents
+  no Person Search pricing, so the SDK makes no billing claim beyond that.
+- The SDK never fetches a next page, never upgrades a `Teaser` search to `Person`, never retries a page and
+  never makes a follow-up call, such as a search by a returned `TahoeID`. Each of those is a separate call
+  your application chooses to make.
+- A page without candidates means only that the response carried none: **it is not a verified no-match**.
+  A refusal (a 4xx, or `isError: true`) is an error, never an empty page, and never returns candidates.
+- Person Search's response limit defaults to **16 MiB**, the maximum, because a page can hold many people:
+  one person with every include, associates among them, can be a few hundred kilobytes. A larger body fails
+  with `ErrResponseTooLarge` **after** the call may have been billed, so size `ResultsPerPage` and
+  `Includes` to fit. `WithMaxResponseBytes`, once given, sets the limit for every operation.
+- The SDK decodes candidates in the provider's order and keeps duplicates. It never selects, ranks, merges
+  or deduplicates them.
+
+</details>
+
+<details>
+<summary><strong><code>Person Search: raw and ignored members</code></strong></summary>
+<br/>
+
+Members whose structure the provider does not document are kept as **raw JSON** rather than guessed at:
+
+| Member | Kept as |
+|---|---|
+| `sourceSummary` (names, addresses, phones, emails, dates of birth, death records) | `SourceSummary json.RawMessage` |
+| `datesOfDeath` entries | `DatesOfDeath []json.RawMessage` |
+| an address's `neighbors` and `neighborSummaryRecords` entries | `[]json.RawMessage` |
+| `criteriaType`, `smartSearchStatistics` | `json.RawMessage` on the result |
+| **every other person member**, such as `driversLicenseDetail` or `relatives`, and an associate's own `associates` | `PersonSearchPerson.Extra`, keyed as sent |
+
+Raw values are copies, never aliasing the response, normalized as `encoding/json` marshals a
+`json.RawMessage` (compact, with `<`, `>`, `&`, U+2028 and U+2029 escaped, and unpaired surrogate escapes
+replaced), so results round-trip unchanged. JSON `null` is `nil`, and `null` person members are left out
+of `Extra`.
+
+They are opaque **personal data, often about other people**: the SDK never types or interprets them, and
+printing one prints all of it. They also cost memory. The response limit bounds the body, and a decode
+budget of four times the body's size plus 1 MiB bounds what the body may decode to, so that a hostile
+response of nested empty lists fails with `ErrResponseTooLarge` instead of costing a hundred times its size.
+Real pages decode to less than their own size.
+
+A record whose only data is under keys the SDK does not decode (a person, a name, an address, a phone, an
+email, a location, a relative, an associate, a date of birth or a death record) fails as
+`ErrUnexpectedResponse`, so a renamed field never makes a billed page come back silently empty. A person
+keeps its unknown members in `Extra`, but still fails when none of its members is recognized. The flag and
+metadata objects (`pagination`, `counts`, `indicators`, `highRiskMarker`, `emailEngagementData`) ignore
+members they do not know, so a new indicator never fails a page.
+
+These envelope members are never decoded or type-checked: `searchCriteria` (it echoes the request's personal
+data), `databaseQueryInfo`, `requestType`, `requestTime` and `totalRequestExecutionTimeMs`. The whole-body
+checks (valid UTF-8 and JSON, no repeated keys) still cover them.
+
+</details>
+
+<details>
+<summary><strong><code>Person Search: limits and unverified assumptions</code></strong></summary>
+<br/>
+
+Built from the provider's Person Search documentation (readme.io docs version 1.4) and an observed response
+structure (key names and types only). The documentation leaves these open, and none has been checked
+against the live API by this SDK's tests:
+
+| Open question | What the SDK does until it is resolved |
+|---|---|
+| The response envelope: the documentation's only example is one PascalCase person, without `persons`, `pagination`, `isError` or `requestId` | Follows the observed camelCase envelope; keys match without regard to ASCII case, so the documented PascalCase decodes too |
+| The `pagination` member names, observed only as `{}` | Decodes `currentPageNumber`, `resultsPerPage`, `totalPages` and `totalResults`, as the provider's other endpoints name them |
+| The shape of `Akas` and `Relatives` (documented as an undefined `Name{}`) | Sends lists of `{FirstName, MiddleName, LastName}` |
+| `ClientIp`, typed as an integer with a dotted format | Sends a canonical dotted IPv4 string |
+| `TahoeIds` (documented) or a single `TahoeId` | Sends the `TahoeIds` list |
+| Include tokens: the includes page lists labels such as "Workplace Summary" | Constants for the two documented and five observed tokens; any other token is sent as given |
+| Filters whose descriptions contradict their names | Sent verbatim; the SDK never interprets them |
+| What `Teaser` and the reverse-phone modes mask or limit, and how | Every value is kept verbatim; nothing is inferred from a mask |
+| The types of a relative's `score` and flags | Integers and booleans; another type fails as `ErrMalformedResponse` |
+| Whether a validation failure is HTTP 400 `{}` or HTTP 200 with `isError: true` | Both are `rejected` |
+| What, and how much, is billed | No billing claim is made |
+| Length limits | SDK limits only: 32 entries per request list, 128-byte tokens, 1,000 entries per page and per response list, and the decode budget |
+
+The test fixtures were written from scratch to these shapes with synthetic values. The opt-in live probe's
+`search-nomatch` and `search-validation` probes exist to settle the envelope, pagination and
+validation-failure questions; see [Examples & Tests](#-examples--tests).
+
+</details>
+
+<details>
 <summary><strong><code>Scope and extension</code></strong></summary>
 <br/>
 
-Contact Enrichment is implemented today; every other API in [Supported APIs](#-supported-apis) is planned,
-and none is stubbed. Each arrives as a new method on `Client` with its own request and result types,
+Contact Enrichment and Person Search are implemented today; every other API in
+[Supported APIs](#-supported-apis) is planned, and none is stubbed. The SDK has no automatic paging and no
+batch requests. Each arrives as a new method on `Client` with its own request and result types,
 added without breaking existing callers; see [docs/adding-an-operation.md](docs/adding-an-operation.md).
 
 </details>
@@ -639,8 +873,9 @@ magex test:fuzz time=5s
 Unit tests never leave the machine: they use in-memory transports and loopback TLS servers with synthetic
 data. They prove, among other things, the exact wire request, the full status table, zero calls for
 invalid input, exactly one attempt on every failure (including HTTP/2 stream resets), that redirects never
-reach their target, bounded reads, timeouts during the body read, safe concurrent use, and that
-credentials and personal data never appear in errors or formatted output.
+reach their target, bounded reads, timeouts during the body read, safe concurrent use across operations,
+that hostile Person Search bodies fail on the decode budget instead of costing many times their size, and
+that credentials and personal data never appear in errors or formatted output.
 
 The runnable `Example*` functions in [example_test.go](example_test.go) run offline against a local TLS
 server.
@@ -658,11 +893,11 @@ the `live` build tag and these variables:
 | `ENFORMION_LIVE=1` | Enables the probe; without it the probe skips. |
 | `ENFORMION_LIVE_ACK_BILLING=I-understand` | Acknowledges that calls may be billed; without it the probe skips. |
 | `CI` | Must be unset; when set, the probe skips. |
-| `ENFORMION_LIVE_PROBES` | Comma-separated probes: `nomatch`, `validation` and `auth` take 1 call each, `casing` takes 2. |
+| `ENFORMION_LIVE_PROBES` | Comma-separated probes. Contact Enrichment: `nomatch`, `validation` and `auth` take 1 call each, `casing` takes 2. Person Search: `search-nomatch` (a `Teaser` search for an invented subject, one result at most) and `search-validation` (an empty `{}` body) take 1 call each. |
 | `ENFORMION_AP_NAME`, `ENFORMION_AP_PASSWORD` | Credentials, read only by the test harness. |
 
 Once enabled, the probe fails before sending anything when `ENFORMION_LIVE_PROBES` names no known probe,
-when the chosen probes need more than 4 calls (all four together need 5), or when the credentials are
+when the chosen probes need more than 4 calls (all six together need 7), or when the credentials are
 invalid.
 
 ```bash
@@ -674,7 +909,9 @@ The `magex` test targets and CI compile the probe with the `live` tag too, and i
 
 A run makes at most 4 calls, never retries, and stops at the first HTTP 429. It prints only the response
 shape (status, response header names, the JSON type tree with identifier-like key names, and the `isError`
-flag), never a value, and discards unprinted any response that unexpectedly holds person data.
+flag), never a value, and discards unprinted any response that unexpectedly holds person data. The
+Person Search probes have not been run yet: running `search-nomatch` and `search-validation` is the check to
+make before relying on that operation's unverified assumptions.
 
 <br/>
 

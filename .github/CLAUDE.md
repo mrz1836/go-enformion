@@ -31,10 +31,11 @@ Happy hacking!
 
 ## About This Project
 
-`go-enformion` is a small Go client for one EnformionGO developer API operation: standard
-**Contact Enrichment**, `POST https://devapi.enformion.com/Contact/Enrich` with the search type
-`DevAPIContactEnrich`. It is a library, not an application: there is no binary, no CLI, and no
-runtime configuration file.
+`go-enformion` is a small Go client for two EnformionGO developer API operations: standard
+**Contact Enrichment** (`EnrichContact`), `POST https://devapi.enformion.com/Contact/Enrich` with the
+search type `DevAPIContactEnrich`, and **Person Search** (`SearchPersons`),
+`POST https://devapi.enformion.com/PersonSearch` with one of four search modes as the search type. It is
+a library, not an application: there is no binary, no CLI, and no runtime configuration file.
 
 - Module: `github.com/mrz1836/go-enformion` (package `enformion`, one flat package)
 - Go version: 1.26 (CI also checks the current release)
@@ -43,9 +44,9 @@ runtime configuration file.
 **Invariants that changes must preserve:**
 - **No runtime dependencies.** Library code imports only the standard library, and never `log`,
   `os`, `unsafe` or `net/http/httputil`. The `depguard` and `forbidigo` linters enforce this.
-- **At most one attempt per call.** No retries, redirects, polling, hedging, fallbacks or
+- **At most one attempt per call.** No retries, redirects, polling, paging, hedging, fallbacks or
   follow-on calls, and `GetBody` stays nil so the standard library cannot resend a POST: the
-  provider's pricing pages say it bills per match.
+  provider's pricing pages say it bills per match, and each Person Search page is its own call.
 - **Credentials reach only the provider or loopback.** There is no general base URL option;
   `WithTestBaseURL` accepts only `https` on `127.0.0.0/8` or `[::1]`. Credentials live only in the
   sender closure, and are withheld from `httptrace` header hooks.

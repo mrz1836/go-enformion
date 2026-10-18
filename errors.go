@@ -159,8 +159,9 @@ const (
 
 // ValidationError describes a local validation failure: nothing was sent. Err
 // is ErrInvalidConfig or ErrInvalidRequest. Field names the argument, option or
-// request field, such as "DOB" or "keyPassword", and Reason is a short fixed
-// code, such as "invalid_format". Neither ever contains the rejected value.
+// request field, with a list index where it has one, such as "DOB",
+// "Addresses[1].County" or "keyPassword", and Reason is a short fixed code,
+// such as "invalid_format". Neither ever contains the rejected value.
 type ValidationError struct {
 	Err    error
 	Field  string
