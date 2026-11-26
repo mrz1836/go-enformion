@@ -83,6 +83,14 @@
 // caller's responsibility, as the provider scrubs no numbers. Read the
 // provider's current terms before use.
 //
+// # Stored responses
+//
+// DecodeSearchPersons and DecodeEnrichContact decode the bytes of an HTTP 200
+// response that the caller kept, with the code SearchPersons and
+// EnrichContact use, and return the same result or *CallError, without a
+// Client or any I/O. Their errors carry no provider diagnostics, and a body
+// over 16 MiB fails with ErrResponseTooLarge.
+//
 // # Proxies
 //
 // The default transport honors HTTPS_PROXY and NO_PROXY through
@@ -94,7 +102,7 @@
 // Standard Contact Enrichment and Person Search are implemented. Contact
 // Enrich Plus, Caller ID, ID Verification, the separate Reverse Phone Search
 // API, batch requests, automatic paging and every other EnformionGO product
-// are out of scope. Future operations would be added as new methods on Client,
-// each with its own request and result types, without breaking existing
-// callers.
+// are out of scope. Future operations would be added as new methods on
+// Client, each with its own request and result types and
+// its own decoder for a kept response, without breaking existing callers.
 package enformion

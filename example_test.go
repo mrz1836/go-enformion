@@ -570,3 +570,39 @@ func ExampleClient_SearchPersons_nextPage() {
 	// page 1 of 2 Jordan Placeholder 1
 	// page 2 of 2 Jordan Placeholder 2
 }
+
+// ExampleDecodeSearchPersons decodes a Person Search response the application
+// kept, without a call or credentials: the same bytes give the page the call
+// returned.
+func ExampleDecodeSearchPersons() {
+	page, err := enformion.DecodeSearchPersons([]byte(exSearchBody))
+	if err != nil {
+		fmt.Println("decode:", err)
+		return
+	}
+	for _, p := range page.Persons {
+		fmt.Println(p.TahoeID, p.FullName)
+	}
+	fmt.Println("request ID:", page.RequestID)
+	// Output:
+	// G-1000000000000000101 Riley Q Sample
+	// G-1000000000000000104 Riley Sample Jr
+	// request ID: synthetic-request-0201
+}
+
+// ExampleDecodeEnrichContact decodes a kept Contact Enrichment response. A
+// kept body whose envelope says isError: true is an error, as it was for the
+// call.
+func ExampleDecodeEnrichContact() {
+	res, err := enformion.DecodeEnrichContact([]byte(exMatchBody))
+	if err != nil {
+		fmt.Println("decode:", err)
+		return
+	}
+	fmt.Println(res.Person.PersonID, *res.IdentityScore, res.RequestID)
+	_, err = enformion.DecodeEnrichContact([]byte(`{"isError":true,"requestId":"synthetic-request-0002"}`))
+	fmt.Println(errors.Is(err, enformion.ErrRejected), err)
+	// Output:
+	// G-1000000000000000042 87 synthetic-request-0001
+	// true enformion: rejected (HTTP 200)
+}

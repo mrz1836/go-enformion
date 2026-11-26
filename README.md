@@ -562,6 +562,35 @@ examples do exactly that.
 
 <br/>
 
+### Decode a stored response
+
+If you keep the bytes of a response, for example to audit what a call returned or to run your own mapping
+again after fixing it, decode them with the code the call uses: `DecodeSearchPersons(body)` and
+`DecodeEnrichContact(body)` return the same result, or the same `*CallError`, that `SearchPersons` and
+`EnrichContact` returned for those bytes. They make no call and need no `Client` or credentials.
+
+```go
+page, err := enformion.DecodeSearchPersons(storedBody)
+```
+
+- **Keep the whole body of the HTTP 200 response,** as the call read it, after any decompression. A call
+  that got any other status never decoded its body, so keep none for it. Nothing about the request is
+  needed.
+- **The same checks apply:** valid UTF-8 and JSON, no trailing data or repeated keys, the `isError`
+  envelope, the rule for records with data only under unknown keys, and the decode budget. Errors carry
+  `StatusCode` 200, as a call's do for an HTTP 200 response.
+- **Two things differ from a call:** errors carry no provider diagnostics, as from a client without
+  `WithProviderDiagnostics` (results always carry theirs); and a body over 16 MiB, the most any call
+  reads, fails with `ErrResponseTooLarge`.
+- The body is never modified, and the result shares no memory with it.
+- If you keep only bodies up to some size, set the client to the same bound with `WithMaxResponseBytes`,
+  so that a call never decodes an answer you can't keep whole.
+
+A later version of the SDK may decode the same bytes differently if a decoding rule changes: pin the
+version whose results you need to reproduce.
+
+<br/>
+
 ## ⚙️ Behavior
 
 <details>
@@ -770,7 +799,8 @@ validation-failure questions; see [Examples & Tests](#-examples--tests).
 Contact Enrichment and Person Search are implemented today; every other API in
 [Supported APIs](#-supported-apis) is planned, and none is stubbed. The SDK has no automatic paging and no
 batch requests. Each arrives as a new method on `Client` with its own request and result types,
-added without breaking existing callers; see [docs/adding-an-operation.md](docs/adding-an-operation.md).
+and its own decoder for a kept response, added without breaking existing callers; see
+[docs/adding-an-operation.md](docs/adding-an-operation.md).
 
 </details>
 
@@ -874,8 +904,9 @@ Unit tests never leave the machine: they use in-memory transports and loopback T
 data. They prove, among other things, the exact wire request, the full status table, zero calls for
 invalid input, exactly one attempt on every failure (including HTTP/2 stream resets), that redirects never
 reach their target, bounded reads, timeouts during the body read, safe concurrent use across operations,
-that hostile Person Search bodies fail on the decode budget instead of costing many times their size, and
-that credentials and personal data never appear in errors or formatted output.
+that hostile Person Search bodies fail on the decode budget instead of costing many times their size,
+that a kept response decodes exactly as the call decoded it, and that credentials and personal data never
+appear in errors or formatted output.
 
 The runnable `Example*` functions in [example_test.go](example_test.go) run offline against a local TLS
 server.
