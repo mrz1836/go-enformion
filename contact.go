@@ -27,7 +27,8 @@ const (
 //
 // Returns the result, or an error that is a *ValidationError (nothing was
 // sent) or a *CallError. A nil Person in the result means the response carried
-// no person data; it is not proof that no match exists.
+// no person data; it is not proof that no match exists. DecodeEnrichContact
+// decodes a kept response body the same way.
 //
 // Side effects: one live, potentially billable call. The provider's pricing
 // pages say it charges per successful match. The SDK never retries, follows a
@@ -59,4 +60,29 @@ func (c *Client) EnrichContact(ctx context.Context, req EnrichContactRequest) (*
 		return nil, err
 	}
 	return decodeEnrichContact(ex, c.diagnostics)
+}
+
+// DecodeEnrichContact decodes body, the bytes of an HTTP 200 Contact
+// Enrichment response that the caller kept, exactly as EnrichContact decodes
+// the response it reads, and returns the same result or the same *CallError.
+// It makes no call and needs no Client or credentials, and nothing about the
+// request.
+//
+// Errors are *CallError values with StatusCode 200, as a call's are for an
+// HTTP 200 response: ErrMalformedResponse, ErrUnexpectedResponse,
+// ErrRejected (isError: true) and ErrResponseTooLarge, the last also for a
+// body over 16 MiB, the most any call reads. They carry no provider
+// diagnostics, as from a Client created without WithProviderDiagnostics; a
+// result carries its diagnostics, as every result does.
+//
+// body must be the whole body of an HTTP 200 response, as the call read it,
+// after any decompression; a call that received any other status never
+// decoded its body. DecodeEnrichContact never modifies body, and the result
+// shares no memory with it.
+func DecodeEnrichContact(body []byte) (*EnrichContactResult, error) {
+	ex, err := storedExchange(body)
+	if err != nil {
+		return nil, err
+	}
+	return decodeEnrichContact(ex, false) // errors keep no provider diagnostics
 }
