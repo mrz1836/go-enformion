@@ -29,6 +29,7 @@ const personSearchPath = "/PersonSearch"
 // sent) or a *CallError. A result without Persons means the response carried
 // no candidates; it is not proof that no match exists. The candidates are the
 // provider's, in its order: the SDK never selects, ranks or merges them.
+// DecodeSearchPersons decodes a kept response body the same way.
 //
 // Side effects: one live, potentially billable call for one page. Each page,
 // and each change of mode, is a separate call that may be billed: the SDK
@@ -62,4 +63,28 @@ func (c *Client) SearchPersons(ctx context.Context, req PersonSearchRequest) (*P
 		return nil, err
 	}
 	return decodeSearchPersons(ex, c.diagnostics)
+}
+
+// DecodeSearchPersons decodes body, the bytes of an HTTP 200 Person Search
+// response that the caller kept, exactly as SearchPersons decodes the response
+// it reads, and returns the same result or the same *CallError. It makes no
+// call and needs no Client or credentials, and nothing about the request.
+//
+// Errors are *CallError values with StatusCode 200, as a call's are for an
+// HTTP 200 response: ErrMalformedResponse, ErrUnexpectedResponse,
+// ErrRejected (isError: true) and ErrResponseTooLarge, the last also for a
+// body over 16 MiB, the most any call reads. They carry no provider
+// diagnostics, as from a Client created without WithProviderDiagnostics; a
+// result carries its diagnostics, as every result does.
+//
+// body must be the whole body of an HTTP 200 response, as the call read it,
+// after any decompression; a call that received any other status never
+// decoded its body. DecodeSearchPersons never modifies body, and the result
+// shares no memory with it.
+func DecodeSearchPersons(body []byte) (*PersonSearchResult, error) {
+	ex, err := storedExchange(body)
+	if err != nil {
+		return nil, err
+	}
+	return decodeSearchPersons(ex, false) // errors keep no provider diagnostics
 }

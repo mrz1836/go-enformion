@@ -10,12 +10,17 @@ billable surface with its own data, terms and contract evidence.
 ## The pattern
 
 An operation is **one method on `*Client`** with **its own request and result
-types**. There is no registry, generic executor, service object or stub.
+types**, and **one exported decoder** for a kept response. There is no
+registry, generic executor, service object or stub.
 
 ```go
 // EnrichContactPlus would send one subject to POST /Contact/EnrichPlus, the
 // route the provider documents for Contact Enrich Plus.
 func (c *Client) EnrichContactPlus(ctx context.Context, req EnrichContactPlusRequest) (*EnrichContactPlusResult, error)
+
+// DecodeEnrichContactPlus would decode a kept HTTP 200 response body exactly
+// as EnrichContactPlus decodes the one it reads.
+func DecodeEnrichContactPlus(body []byte) (*EnrichContactPlusResult, error)
 ```
 
 The method follows the same steps as `EnrichContact` in `contact.go` and
@@ -37,7 +42,10 @@ The method follows the same steps as `EnrichContact` in `contact.go` and
    `WithMaxResponseBytes`, once given, applies to every operation.
 5. Decode the exchange with the operation's own decoder: `statusFailure` for
    any status other than 200, then `checkStrict`, the envelope (`isError`,
-   `requestId`, `message`, `error`) and the operation's typed result.
+   `requestId`, `message`, `error`) and the operation's typed result. The
+   exported decoder passes the same function an HTTP 200 exchange of the kept
+   body (`storedExchange`, which also refuses a body over 16 MiB) and
+   diagnostics off, so a kept body decodes exactly as the call decoded it.
 
 ## Rules for the new types
 
@@ -59,8 +67,10 @@ The method follows the same steps as `EnrichContact` in `contact.go` and
 - **Tests.** The same evidence as the existing operations: exact wire request,
   the status table, zero calls on invalid input, exactly one attempt on every
   failure, privacy markers across fmt verbs and error chains, allocation
-  ceilings, an every-field fixture that leaves no exported field at zero, and
-  fuzzing of the decoder.
+  ceilings, an every-field fixture that leaves no exported field at zero,
+  fuzzing of the decoder, a test that every fixture served by a local server
+  and decoded with the exported decoder gives equal results, and a fuzz target
+  that compares the two.
 
 ## Decoding building blocks
 

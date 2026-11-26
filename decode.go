@@ -253,6 +253,17 @@ func envelopeNames() []string {
 	}
 }
 
+// storedExchange returns an HTTP 200 exchange of body, a response the caller
+// kept, or the CallError a call returns for a body over the largest limit any
+// call reads: the strict checks hold key positions in 32 bits, sized for that
+// limit.
+func storedExchange(body []byte) (*exchange, error) {
+	if len(body) > maxResponseBytesLimit {
+		return nil, newCallError(FailureResponseTooLarge, http.StatusOK, errResponseTooLarge)
+	}
+	return &exchange{status: http.StatusOK, body: body}, nil
+}
+
 // decodeEnrichContact turns an exchange into a result or a *CallError.
 func decodeEnrichContact(ex *exchange, withDiagnostics bool) (*EnrichContactResult, error) {
 	if ex.status != http.StatusOK {
